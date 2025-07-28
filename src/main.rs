@@ -14,7 +14,7 @@ use std::process::Command;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    #[arg(long = "java-path", value_name = "PATH", global = true)]
+    #[arg(long = "runtime", short = 'r', value_name = "PATH", global = true)]
     java_runtime_path: Option<String>,
 }
 
