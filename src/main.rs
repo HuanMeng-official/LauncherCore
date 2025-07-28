@@ -526,6 +526,21 @@ impl MinecraftLauncher {
         let mut jvm_arguments = vec![
             "-Xmx2G".to_string(),
             "-Xms1G".to_string(),
+            "-XX:+UnlockExperimentalVMOptions".to_string(),
+            "-XX:+UnlockDiagnosticVMOptions".to_string(),
+            "-XX:+UseG1GC".to_string(),
+            "-XX:G1MixedGCCountTarget=5".to_string(),
+            "-XX:G1NewSizePercent=20".to_string(),
+            "-XX:G1ReservePercent=20".to_string(),
+            "-XX:MaxGCPauseMillis=50".to_string(),
+            "-XX:G1HeapRegionSize=32m".to_string(),
+            "-XX:-OmitStackTraceInFastThrow".to_string(),
+            "-XX:-DontCompileHugeMethods".to_string(),
+            "-XX:MaxNodeLimit=240000".to_string(),
+            "-XX:NodeLimitFudgeFactor=8000".to_string(),
+            "-XX:TieredCompileTaskTimeout=10000".to_string(),
+            "-XX:ReservedCodeCacheSize=400M".to_string(),
+            "-XX:NmethodSweepActivity=1".to_string(),
             "-Djava.library.path=".to_string() + &version_natives_dir.to_string_lossy(),
         ];
         if let Some(custom_jvm_args) = jvm_args {
