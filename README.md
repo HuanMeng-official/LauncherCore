@@ -55,7 +55,7 @@ Projetc/
 
 ### FAQ:
  - Not found Java?  
-Set the JAVA_HOME environment variable or explicitly specify the Java path with --java-path.
+Set the JAVA_HOME environment variable or explicitly specify the Java path with --runtime.
  - Launch fails or throws errors?  
 Verify that dependencies and resources were downloaded completely, or check the detailed error output in the terminal.
 

@@ -30,13 +30,10 @@ enum Commands {
     )]
     Launch {
         version: String,
-        // Minecraft username
         #[arg(short, long, default_value = "Player")]
         username: String,
-        // Access token (for newer versions)
         #[arg(long, default_value = "0")]
         access_token: String,
-        // JVM arguments
         #[arg(short, long)]
         jvm_args: Option<String>,
     },
@@ -139,7 +136,6 @@ struct Classifiers {
     natives_windows: Option<Artifact>,
     #[serde(rename = "natives-macos")]
     natives_macos: Option<Artifact>,
-    // 捕获所有其他分类器
     #[serde(flatten)]
     other: HashMap<String, Artifact>,
 }
@@ -165,7 +161,7 @@ struct AssetObject {
 pub enum LauncherError {
     #[error("Version {0} not found")]
     VersionNotFound(String),
-    #[error("Java not found. Please set JAVA_HOME or use --java-path")]
+    #[error("Java not found. Please set JAVA_HOME or use --runtime")]
     JavaNotFound,
 }
 
@@ -261,13 +257,17 @@ impl MinecraftLauncher {
         // 下载客户端 JAR
         if let Some(downloads) = &version_details.downloads {
             println!("Downloading client JAR...");
-            self.download_file(&client, &downloads.client.url, &version_dir.join(format!("{}.jar", version_id))).await?;
+            self.download_file(
+                &client,
+                &downloads.client.url,
+                &version_dir.join(format!("{}.jar", version_id)),
+            )
+            .await?;
         }
         // 保存版本 JSON
         let version_json_path = version_dir.join(format!("{}.json", version_id));
         let version_json_content = serde_json::to_string_pretty(&version_details)?;
         fs::write(&version_json_path, version_json_content)?;
-        // 下载依赖库和本地库
         println!("Downloading libraries...");
         // 为每个版本创建独立的 natives 目录
         let version_natives_dir = version_dir.join("natives");
@@ -283,7 +283,8 @@ impl MinecraftLauncher {
                         if let Some(parent) = library_path.parent() {
                             fs::create_dir_all(parent)?;
                         }
-                        self.download_file(&client, &artifact.url, &library_path).await?;
+                        self.download_file(&client, &artifact.url, &library_path)
+                            .await?;
                     }
                 }
                 // 处理标准 natives
@@ -295,14 +296,14 @@ impl MinecraftLauncher {
                             if let Some(parent) = native_path.parent() {
                                 fs::create_dir_all(parent)?;
                             }
-                            self.download_file(&client, &artifact.url, &native_path).await?;
+                            self.download_file(&client, &artifact.url, &native_path)
+                                .await?;
                         }
-                        // 解压本地库到版本特定的目录
                         self.extract_lwjgl3_native_library(&native_path, &version_natives_dir)?;
                     }
                 }
                 if let Some(classifiers) = &downloads.classifiers {
-                     for (classifier_name, artifact) in &classifiers.other {
+                    for (classifier_name, artifact) in &classifiers.other {
                         // 检查 classifier 名称是否包含 "natives" 并且匹配当前操作系统
                         let is_native_for_os = if cfg!(target_os = "windows") {
                             classifier_name.contains("natives-windows")
@@ -314,12 +315,13 @@ impl MinecraftLauncher {
                             false
                         };
                         if is_native_for_os {
-                             let native_path = self.libraries_dir.join(&artifact.path);
+                            let native_path = self.libraries_dir.join(&artifact.path);
                             if !native_path.exists() {
                                 if let Some(parent) = native_path.parent() {
                                     fs::create_dir_all(parent)?;
                                 }
-                                self.download_file(&client, &artifact.url, &native_path).await?;
+                                self.download_file(&client, &artifact.url, &native_path)
+                                    .await?;
                             }
                             // 解压本地库到版本特定的目录
                             self.extract_lwjgl3_native_library(&native_path, &version_natives_dir)?;
@@ -332,7 +334,8 @@ impl MinecraftLauncher {
         if let Some(asset_index) = &version_details.asset_index {
             println!("Downloading asset index...");
             let asset_index_path = self.assets_indexes_dir.join(format!("{}.json", asset_index.id));
-            self.download_file(&client, &asset_index.url, &asset_index_path).await?;
+            self.download_file(&client, &asset_index.url, &asset_index_path)
+                .await?;
             println!("Downloading assets...");
             self.download_assets(&client, &asset_index_path).await?;
         }
@@ -357,7 +360,10 @@ impl MinecraftLauncher {
                 if let Some(parent) = asset_path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let asset_url = format!("https://resources.download.minecraft.net/{}/{}", first_two, hash);
+                let asset_url = format!(
+                    "https://resources.download.minecraft.net/{}/{}",
+                    first_two, hash
+                );
                 self.download_file(client, &asset_url, &asset_path).await?;
             }
         }
@@ -402,15 +408,16 @@ impl MinecraftLauncher {
         let mut archive = zip::ZipArchive::new(file)
             .with_context(|| format!("Failed to read ZIP archive: {:?}", jar_path))?;
         for i in 0..archive.len() {
-            let mut file = archive.by_index(i)
+            let mut file = archive
+                .by_index(i)
                 .with_context(|| format!("Failed to get file entry {} from archive: {:?}", i, jar_path))?;
             let outpath = extract_dir.join(file.mangled_name());
-            // 只解压动态链接库文件
             let file_name = file.name().to_lowercase();
             if file_name.ends_with(".dll") || file_name.ends_with(".so") || file_name.ends_with(".dylib") {
                 if let Some(p) = outpath.parent() {
                     if !p.exists() {
-                        fs::create_dir_all(p).with_context(|| format!("Failed to create directory for native file: {:?}", p))?;
+                        fs::create_dir_all(p)
+                            .with_context(|| format!("Failed to create directory for native file: {:?}", p))?;
                     }
                 }
                 let mut outfile = std::fs::File::create(&outpath)
@@ -438,6 +445,12 @@ impl MinecraftLauncher {
         let version_json_path = version_dir.join(format!("{}.json", version_id));
         let version_json = fs::read_to_string(&version_json_path)?;
         let version_details: VersionDetails = serde_json::from_str(&version_json)?;
+
+        let is_version_1_16_5 = version_id == "1.16.5";
+        if is_version_1_16_5 {
+            println!("Detected version 1.16.5. Filtering out LWJGL 3.2.1 libraries.");
+        }
+
         // 查找 Java: 优先使用全局参数，然后是 JAVA_HOME
         let java_path = if let Some(override_path) = global_java_path_override {
             println!("Using explicitly provided global Java path: {}", override_path);
@@ -446,10 +459,26 @@ impl MinecraftLauncher {
             self.find_java_from_env()?
         };
         println!("Using Java: {:?}", java_path);
+
         // 构建类路径
         let mut classpath = Vec::new();
         classpath.push(version_dir.join(format!("{}.jar", version_id)));
+
         for library in &version_details.libraries {
+            if is_version_1_16_5 {
+                if library.name.starts_with("org.lwjgl:") {
+                    let parts: Vec<&str> = library.name.split(':').collect();
+                    if parts.len() == 3 {
+                        let library_version = parts[2];
+                        if library_version == "3.2.1" {
+                            println!("  Skipping LWJGL 3.2.1 library: {}", library.name);
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // 原有逻辑：添加库到 classpath
             if let Some(downloads) = &library.downloads {
                 if let Some(artifact) = &downloads.artifact {
                     let library_path = self.libraries_dir.join(&artifact.path);
@@ -459,12 +488,14 @@ impl MinecraftLauncher {
                 }
             }
         }
+
         let classpath_str = classpath
             .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect::<Vec<_>>()
             .join(if cfg!(windows) { ";" } else { ":" });
-        // 构建 JVM 参数 - 使用版本特定的 natives 目录
+
+        // 构建 JVM 参数
         let version_natives_dir = version_dir.join("natives");
         let mut jvm_arguments = vec![
             "-Xmx2G".to_string(),
@@ -486,6 +517,7 @@ impl MinecraftLauncher {
         } else {
             version_id.to_string()
         };
+
         let game_args = vec![
             "--username".to_string(),
             username,
@@ -505,12 +537,14 @@ impl MinecraftLauncher {
             "00000000-0000-0000-0000-000000000000".to_string(),
             "--userType".to_string(),
             "legacy".to_string(),
+            "--userProperties".to_string(),
+            "{}".to_string(),
         ];
+
         // 组合所有参数
         let mut command_args = jvm_arguments;
         command_args.extend(game_args);
         println!("Launching with command: {} {:?}", java_path.display(), command_args);
-        // 启动游戏
         let status = Command::new(&java_path)
             .args(&command_args)
             .status()
@@ -523,18 +557,24 @@ impl MinecraftLauncher {
         Ok(())
     }
 
-    /// 仅从 JAVA_HOME 环境变量查找 Java
     fn find_java_from_env(&self) -> Result<PathBuf, LauncherError> {
         // 尝试从环境变量 JAVA_HOME 获取
         if let Ok(java_home) = std::env::var("JAVA_HOME") {
             let java_home_path = PathBuf::from(java_home);
             // 构造 Java 可执行文件路径
-            let java_bin = java_home_path.join("bin").join(if cfg!(target_os = "windows") { "java.exe" } else { "java" });
+            let java_bin = java_home_path.join("bin").join(if cfg!(target_os = "windows") {
+                "java.exe"
+            } else {
+                "java"
+            });
             if java_bin.exists() {
                 println!("Found Java in JAVA_HOME: {:?}", java_home_path);
                 return Ok(java_bin);
             } else {
-                eprintln!("JAVA_HOME is set to '{:?}' but Java executable not found at '{:?}'", java_home_path, java_bin);
+                eprintln!(
+                    "JAVA_HOME is set to '{:?}' but Java executable not found at '{:?}'",
+                    java_home_path, java_bin
+                );
             }
         } else {
             eprintln!("JAVA_HOME environment variable is not set.");
@@ -548,10 +588,8 @@ impl MinecraftLauncher {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let launcher = MinecraftLauncher::new()?;
-
     // 在 match 之前提取全局 java_path
     let global_java_path = cli.java_runtime_path;
-
     match &cli.command {
         Commands::List => {
             launcher.list_versions().await?;
