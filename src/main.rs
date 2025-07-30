@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "mclauncher-core.exe")]
-#[command(override_usage = "mclauncher-core.exe [OPTIONS] <COMMAND>")]
+#[command(name = "mclauncher-core")]
+#[command(override_usage = "mclauncher-core <COMMAND> <OPTIONS>")]
 #[command(disable_version_flag = true)]
 #[command(about = "A simple Minecraft launcher core.")]
 struct Cli {
