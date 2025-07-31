@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -225,6 +225,94 @@ impl MinecraftLauncher {
         Ok(())
     }
 
+    async fn install_lwjgl_arm64_natives(&self, version_id: &str, version_details: &VersionDetails) -> Result<()> {
+        if std::env::consts::OS != "linux" || std::env::consts::ARCH != "aarch64" {
+            return Ok(());
+        }
+
+        println!("LWJGL ARM64: Checking for LWJGL libraries to replace with ARM64 versions...");
+
+        let mut lwjgl_versions: HashMap<String, String> = HashMap::new();
+        let mut lwjgl_modules_found: HashSet<String> = HashSet::new();
+        let target_lwjgl_modules: HashSet<&str> = [
+            "lwjgl", "lwjgl-glfw", "lwjgl-jemalloc", "lwjgl-openal",
+            "lwjgl-opengl", "lwjgl-stb", "lwjgl-tinyfd", "lwjgl-freetype"
+        ].iter().cloned().collect();
+
+        for lib in &version_details.libraries {
+            if lib.name.starts_with("org.lwjgl:") {
+                let parts: Vec<&str> = lib.name.split(':').collect();
+                if parts.len() == 3 {
+                    let group_id = parts[0];
+                    let artifact_id = parts[1];
+                    let version = parts[2];
+
+                    if target_lwjgl_modules.contains(artifact_id) {
+                         lwjgl_versions.insert(artifact_id.to_string(), version.to_string());
+                         lwjgl_modules_found.insert(artifact_id.to_string());
+                    }
+                }
+            }
+        }
+
+        if lwjgl_versions.is_empty() {
+             println!("LWJGL ARM64: No LWJGL libraries found in version manifest for {}, skipping ARM64 native install.", version_id);
+             return Ok(());
+        }
+
+        println!("LWJGL ARM64: Found LWJGL modules for version {}: {:?}", version_id, lwjgl_versions);
+
+        let os_name = "linux";
+        let arch_name = "arm64";
+        let classifier = format!("natives-{}-{}", os_name, arch_name);
+
+        let client = reqwest::Client::new();
+        let temp_dir = tempfile::tempdir()?;
+
+        for (module_artifact_id, module_version) in &lwjgl_versions {
+            let group_path = "org/lwjgl";
+            let url = format!(
+                "https://repo1.maven.org/maven2/{group_path}/{module}/{version}/{module}-{version}-{classifier}.jar",
+                group_path = group_path,
+                module = module_artifact_id,
+                version = module_version,
+                classifier = classifier
+            );
+            println!("LWJGL ARM64: Preparing to download {}", url);
+
+            let temp_file_path = temp_dir.path().join(format!("{}-{}-{}.jar", module_artifact_id, module_version, classifier));
+            println!("LWJGL ARM64: Downloading {}:{} ARM64 natives...", module_artifact_id, module_version);
+
+            let download_result = self.download_file(&client, &url, &temp_file_path).await;
+            if let Err(e) = download_result {
+                let is_not_found = if let Some(reqwest_err) = e.downcast_ref::<reqwest::Error>() {
+                    if let Some(status) = reqwest_err.status() {
+                         status == reqwest::StatusCode::NOT_FOUND
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if is_not_found {
+                    println!("LWJGL ARM64: Warning: ARM64 native library not found at {}. It seems this LWJGL version ({}) does not provide official ARM64 binaries. Skipping this module.", url, module_version);
+                    continue;
+                } else {
+                    println!("LWJGL ARM64: Warning: Failed to download {} ({}). Error: {}. Skipping this module.", module_artifact_id, url, e);
+                    continue;
+                }
+            }
+
+            let version_natives_dir = self.versions_dir.join(version_id).join("natives");
+            println!("LWJGL ARM64: Extracting {}:{} natives to {:?}", module_artifact_id, module_version, version_natives_dir);
+            self.extract_lwjgl3_native_library(&temp_file_path, &version_natives_dir)?;
+        }
+
+        println!("LWJGL ARM64: Installation of ARM64 native libraries completed (where available) for version {}.", version_id);
+        Ok(())
+    }
+
     async fn install_version(&self, version_id: &str) -> Result<()> {
         println!("Installing Minecraft version: {}", version_id);
         let client = reqwest::Client::new();
@@ -281,6 +369,9 @@ impl MinecraftLauncher {
             self.process_other_natives(&client, classifiers, &version_natives_dir)
                 .await?;
         }
+
+        self.install_lwjgl_arm64_natives(version_id, &version_details).await?;
+
         if let Some(asset_index) = &version_details.asset_index {
             println!("Downloading asset index...");
             let asset_index_path = self.assets_indexes_dir.join(format!("{}.json", asset_index.id));
@@ -350,11 +441,9 @@ impl MinecraftLauncher {
             "x86_64" => "x64",
             _ => std::env::consts::ARCH,
         };
-
         for (classifier_name, artifact) in &classifiers.other {
             let is_native_for_os_and_arch = classifier_name == &format!("natives-{}-{}", os_name, arch_name) ||
                                             (arch_name == "x64" && classifier_name == &format!("natives-{}", os_name));
-
             if is_native_for_os_and_arch || classifier_name == &format!("natives-{}", os_name) {
                 let native_path = self.libraries_dir.join(&artifact.path);
                 if !native_path.exists() {
@@ -405,19 +494,15 @@ impl MinecraftLauncher {
             "macos" => "macos",
             _ => return None,
         };
-
         let arch_name = match std::env::consts::ARCH {
             "aarch64" => "aarch64",
             "x86_64" => "x64",
             _ => std::env::consts::ARCH,
         };
-
         let specific_key = format!("natives-{}-{}", os_name, arch_name);
-
         if let Some(artifact) = classifiers.other.get(&specific_key) {
             return Some(artifact);
         }
-
         match std::env::consts::OS {
             "windows" => {
                 classifiers
