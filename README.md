@@ -17,10 +17,10 @@ git clone https://github.com/HuanMeng-official/LauncherCore.git
 cd LauncherCore
 cargo build --release
 ```
-After compilation, the executable can be found at ``target/release/mclauncher-core.exe`` or ``target/release/mclauncher-core``.
+After compilation, the executable can be found at ``target/release/mclc.exe`` or ``target/release/mclc``.
 
 ### Usage:
-``mclauncher-core <COMMANDS> <OPTIONS>``
+``mclc <COMMANDS> <OPTIONS>``
 | Commands | Description |
 | --- | --- |
 | **list** | List available Minecraft versions |
@@ -34,7 +34,7 @@ After compilation, the executable can be found at ``target/release/mclauncher-co
 | **-h, --help** | Print help |
 
 *For example:*  
-``mclauncher-core launcher <Version> --username <PlayerName> --runtime "C:\Program Files\Java\bin\java.exe"``
+``mclc launcher <Version> --username <PlayerName> --runtime "C:\Program Files\Java\bin\java.exe"``
 
 ### Operating principle:
  - Call the [Mojang official version manifest](https://launchermeta.mojang.com/mc/game/version_manifest.json) to retrieve the complete list of supported versions.

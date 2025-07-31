@@ -1,5 +1,5 @@
 [package]
-name = "mclauncher-core"
+name = "mclc"
 version = "0.1.0"
 edition = "2024"
 

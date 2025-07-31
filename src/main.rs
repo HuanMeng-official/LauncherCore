@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Parser)]
-#[command(name = "mclauncher-core")]
-#[command(override_usage = "mclauncher-core <COMMAND> <OPTIONS>")]
+#[command(name = "mclc")]
+#[command(override_usage = "mclc <COMMAND> <OPTIONS>")]
 #[command(disable_version_flag = true)]
 #[command(about = "A simple Minecraft launcher core.")]
 struct Cli {
@@ -24,7 +24,7 @@ enum Commands {
     Install {
         version: String,
     },
-    #[command(about = "Minecraft Launcher", long_about = "A Simple Minecraft Launcher")]
+    #[command(about = "Minecraft Launcher Cli", long_about = "A Simple Minecraft Launcher")]
     Launch {
         version: String,
         #[arg(short, long, default_value = "Player")]
@@ -268,25 +268,19 @@ impl MinecraftLauncher {
         if !version_natives_dir.exists() {
             fs::create_dir_all(&version_natives_dir)?;
         }
-
         for library in &version_details.libraries {
             let Some(downloads) = &library.downloads else {
                 continue;
             };
-
             self.process_library_artifact(&client, downloads).await?;
-
             let Some(classifiers) = &downloads.classifiers else {
                 continue;
             };
-
             self.process_native_artifact(&client, classifiers, &version_natives_dir)
                 .await?;
-
             self.process_other_natives(&client, classifiers, &version_natives_dir)
                 .await?;
         }
-
         if let Some(asset_index) = &version_details.asset_index {
             println!("Downloading asset index...");
             let asset_index_path = self.assets_indexes_dir.join(format!("{}.json", asset_index.id));
@@ -307,7 +301,6 @@ impl MinecraftLauncher {
         let Some(artifact) = &downloads.artifact else {
             return Ok(());
         };
-
         let library_path = self.libraries_dir.join(&artifact.path);
         if !library_path.exists() {
             if let Some(parent) = library_path.parent() {
@@ -328,7 +321,6 @@ impl MinecraftLauncher {
         let Some(artifact) = self.get_native_artifact(classifiers) else {
             return Ok(());
         };
-
         let native_path = self.libraries_dir.join(&artifact.path);
         if !native_path.exists() {
             if let Some(parent) = native_path.parent() {
@@ -347,18 +339,23 @@ impl MinecraftLauncher {
         classifiers: &Classifiers,
         version_natives_dir: &Path,
     ) -> Result<()> {
-        for (classifier_name, artifact) in &classifiers.other {
-            let is_native_for_os = if cfg!(target_os = "windows") {
-                classifier_name.contains("natives-windows")
-            } else if cfg!(target_os = "linux") {
-                classifier_name.contains("natives-linux")
-            } else if cfg!(target_os = "macos") {
-                classifier_name.contains("natives-macos")
-            } else {
-                false
-            };
+        let os_name = match std::env::consts::OS {
+            "windows" => "windows",
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => return Ok(()),
+        };
+        let arch_name = match std::env::consts::ARCH {
+            "aarch64" => "aarch64",
+            "x86_64" => "x64",
+            _ => std::env::consts::ARCH,
+        };
 
-            if is_native_for_os {
+        for (classifier_name, artifact) in &classifiers.other {
+            let is_native_for_os_and_arch = classifier_name == &format!("natives-{}-{}", os_name, arch_name) ||
+                                            (arch_name == "x64" && classifier_name == &format!("natives-{}", os_name));
+
+            if is_native_for_os_and_arch || classifier_name == &format!("natives-{}", os_name) {
                 let native_path = self.libraries_dir.join(&artifact.path);
                 if !native_path.exists() {
                     if let Some(parent) = native_path.parent() {
@@ -402,23 +399,45 @@ impl MinecraftLauncher {
     }
 
     fn get_native_artifact<'a>(&self, classifiers: &'a Classifiers) -> Option<&'a Artifact> {
-        if cfg!(target_os = "windows") {
-            classifiers
-                .natives_windows
-                .as_ref()
-                .or_else(|| classifiers.other.get("natives-windows"))
-        } else if cfg!(target_os = "linux") {
-            classifiers
-                .natives_linux
-                .as_ref()
-                .or_else(|| classifiers.other.get("natives-linux"))
-        } else if cfg!(target_os = "macos") {
-            classifiers
-                .natives_macos
-                .as_ref()
-                .or_else(|| classifiers.other.get("natives-macos"))
-        } else {
-            None
+        let os_name = match std::env::consts::OS {
+            "windows" => "windows",
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => return None,
+        };
+
+        let arch_name = match std::env::consts::ARCH {
+            "aarch64" => "aarch64",
+            "x86_64" => "x64",
+            _ => std::env::consts::ARCH,
+        };
+
+        let specific_key = format!("natives-{}-{}", os_name, arch_name);
+
+        if let Some(artifact) = classifiers.other.get(&specific_key) {
+            return Some(artifact);
+        }
+
+        match std::env::consts::OS {
+            "windows" => {
+                classifiers
+                    .natives_windows
+                    .as_ref()
+                    .or_else(|| classifiers.other.get("natives-windows"))
+            }
+            "linux" => {
+                classifiers
+                    .natives_linux
+                    .as_ref()
+                    .or_else(|| classifiers.other.get("natives-linux"))
+            }
+            "macos" => {
+                classifiers
+                    .natives_macos
+                    .as_ref()
+                    .or_else(|| classifiers.other.get("natives-macos"))
+            }
+            _ => None,
         }
     }
 
@@ -475,12 +494,10 @@ impl MinecraftLauncher {
         let version_json_path = version_dir.join(format!("{}.json", version_id));
         let version_json = fs::read_to_string(&version_json_path)?;
         let version_details: VersionDetails = serde_json::from_str(&version_json)?;
-
         let is_version_1_16_5 = version_id == "1.16.5";
         if is_version_1_16_5 {
             println!("Detected version 1.16.5. Filtering out LWJGL 3.2.1 libraries.");
         }
-
         let java_path = if let Some(override_path) = global_java_path_override {
             println!("Using explicitly provided global Java path: {}", override_path);
             PathBuf::from(override_path)
@@ -488,10 +505,8 @@ impl MinecraftLauncher {
             self.find_java_from_env()?
         };
         println!("Using Java: {:?}", java_path);
-
         let mut classpath = Vec::new();
         classpath.push(version_dir.join(format!("{}.jar", version_id)));
-
         for library in &version_details.libraries {
             if is_version_1_16_5 {
                 if library.name.starts_with("org.lwjgl:") {
@@ -505,7 +520,6 @@ impl MinecraftLauncher {
                     }
                 }
             }
-
             if let Some(downloads) = &library.downloads {
                 if let Some(artifact) = &downloads.artifact {
                     let library_path = self.libraries_dir.join(&artifact.path);
@@ -515,13 +529,11 @@ impl MinecraftLauncher {
                 }
             }
         }
-
         let classpath_str = classpath
             .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect::<Vec<_>>()
             .join(if cfg!(windows) { ";" } else { ":" });
-
         let version_natives_dir = version_dir.join("natives");
         let mut jvm_arguments = vec![
             "-Xmx2G".to_string(),
@@ -549,7 +561,6 @@ impl MinecraftLauncher {
         jvm_arguments.push("-cp".to_string());
         jvm_arguments.push(classpath_str);
         jvm_arguments.push(version_details.main_class);
-
         let client_id = "0";
         let asset_index_id = if let Some(asset_index) = &version_details.asset_index {
             asset_index.id.clone()
@@ -578,11 +589,9 @@ impl MinecraftLauncher {
             "--userProperties".to_string(),
             "{}".to_string(),
         ];
-
         let mut command_args = jvm_arguments;
         command_args.extend(game_args);
         println!("Launching with command: {} {:?}", java_path.display(), command_args);
-
         let status = Command::new(&java_path)
             .args(&command_args)
             .status()
