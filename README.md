@@ -1,6 +1,11 @@
 ## LauncherCore
 > This launcher, written in Rust, handles most of the key processes in the Minecraft launch core, including version management, dependency handling, resource downloading, launch parameter assembly, and process launching. It is suitable for use as a backend module for a CLI launcher or as reference code for learning the Minecraft launch process.  
 
+[![EN](https://img.shields.io/badge/English-Click-blue)](./README.md)
+[![CN](https://img.shields.io/badge/简体中文-Click-blue)](./README/README_zh_CN.md)
+![MIT](https://img.shields.io/badge/License-MIT-green)
+![Rust](https://img.shields.io/badge/Rust-100%25-orange) 
+
 ### Features:
 - **Command Line Interface**: Built on Clap, simple and user-friendly.
 - **Supports All Official Versions**: Automatically fetches the complete list of Minecraft versions and supports installation and launch of any official version.
