@@ -3,6 +3,7 @@
 
 [![EN](https://img.shields.io/badge/English-Click-blue)](./README.md)
 [![CN](https://img.shields.io/badge/简体中文-Click-blue)](./README/README_zh_CN.md)
+[![FR](https://img.shields.io/badge/Français-Click-yellow)](./README/README_fr_FR.md)
 ![MIT](https://img.shields.io/badge/License-MIT-green)
 ![Rust](https://img.shields.io/badge/Rust-100%25-orange) 
 
@@ -32,6 +33,7 @@ After compilation, the executable can be found at ``target/release/mclc.exe`` or
 | **install** | Install a Minecraft version |
 | **launch** | Launch Minecraft |
 | **help** | Print this message or the help of the given subcommand(s) |
+| **login** | Login to Microsoft account |
 
 | Options | Description |
 | --- | --- |
@@ -39,7 +41,12 @@ After compilation, the executable can be found at ``target/release/mclc.exe`` or
 | **-h, --help** | Print help |
 
 *For example:*  
-``mclc launcher <Version> --username <PlayerName> --runtime "C:\Program Files\Java\bin\java.exe"``
+Online:  
+1. ``mclc login``  
+2. ``mclc launcher <Version>``  
+  
+Offline:  
+1. ``mclc launcher <Version> --username <PlayerName> --runtime "C:\Program Files\Java\bin\java.exe"``
 
 ### Operating principle:
  - Call the [Mojang official version manifest](https://launchermeta.mojang.com/mc/game/version_manifest.json) to retrieve the complete list of supported versions.

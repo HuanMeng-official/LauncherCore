@@ -3,8 +3,9 @@
 
 [![EN](https://img.shields.io/badge/English-Click-blue)](../README.md)
 [![CN](https://img.shields.io/badge/简体中文-Click-blue)](./README_zh_CN.md)
+[![FR](https://img.shields.io/badge/Français-Click-yellow)](./README_fr_FR.md)
 ![MIT](https://img.shields.io/badge/License-MIT-green)
-![Rust](https://img.shields.io/badge/Rust-100%25-orange) 
+![Rust](https://img.shields.io/badge/Rust-100%25-orange)
 
 ### 功能特性：
 - **命令行界面**：基于Clap构建，简单易用
@@ -32,6 +33,7 @@ cargo build --release
 | **install** | 安装一个Minecraft版本 |
 | **launch** | 启动Minecraft |
 | **help** | 显示帮助信息或指定的子命令的帮助信息 |
+| **login** | 登录到微软账户 |
 
 | Options | Description |
 | --- | --- |
@@ -39,7 +41,12 @@ cargo build --release
 | **-h, --help** | 显示帮助 |
 
 *示例：*  
-``mclc launcher <Version> --username <PlayerName> --runtime "C:\Program Files\Java\bin\java.exe"``
+在线登录：  
+1. ``mclc login``  
+2. ``mclc launcher <Version>``  
+  
+离线登录：  
+1. ``mclc launcher <Version> --username <PlayerName> --runtime "C:\Program Files\Java\bin\java.exe"``
 
 ### 运行原理：
 - 调用[Mojang官方版本清单](https://launchermeta.mojang.com/mc/game/version_manifest.json)获取支持的所有版本。
