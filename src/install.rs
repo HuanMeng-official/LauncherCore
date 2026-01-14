@@ -1,6 +1,6 @@
 use crate::models::*;
 use anyhow::Context;
-use futures_util::StreamExt;
+use futures_util::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
@@ -12,6 +12,14 @@ use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 const VERSION_MANIFEST_URL: &str = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
 const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net";
 const MAVEN_BASE_URL: &str = "https://repo1.maven.org/maven2";
+const MAX_CONCURRENT_DOWNLOADS: usize = 16;
+
+#[derive(Debug, Clone)]
+struct DownloadTask {
+    url: String,
+    path: std::path::PathBuf,
+    task_type: String,
+}
 
 #[derive(Debug)]
 pub struct Installer {
@@ -47,20 +55,146 @@ impl Installer {
         let version_dir = self.versions_dir.join(version_id);
         fs::create_dir_all(&version_dir)?;
 
-        // Use a simple spinner for download progress
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(ProgressStyle::default_spinner()
-            .template("{spinner:.green} Downloading files... {msg}")
-            .unwrap());
-        pb.enable_steady_tick(std::time::Duration::from_millis(100));
+        // Collect all download tasks
+        let mut tasks = Vec::new();
+        let mut extraction_tasks = Vec::new();
+        let mut asset_index_url = None;
+        let mut asset_index_path = None;
 
-        let counter = Arc::new(AtomicU64::new(0));
-        let pb = Arc::new(pb);
-
-        // Download client JAR
+        // Client JAR
         if let Some(downloads) = &version_details.downloads {
             let client_jar_path = version_dir.join(format!("{}.jar", version_id));
-            self.download_file_with_simple_progress(&client, &downloads.client.url, &client_jar_path, &counter, &pb).await?;
+            if !client_jar_path.exists() {
+                tasks.push(DownloadTask {
+                    url: downloads.client.url.clone(),
+                    path: client_jar_path,
+                    task_type: "client".to_string(),
+                });
+            }
+        }
+
+        // Asset index URL (always need to check this for assets)
+        if let Some(asset_index) = &version_details.asset_index {
+            let index_path = self.assets_indexes_dir.join(format!("{}.json", asset_index.id));
+            asset_index_url = Some(asset_index.url.clone());
+            asset_index_path = Some(index_path.clone());
+        }
+
+        // Download client JAR and asset index first if needed
+        let mut first_phase_tasks = Vec::new();
+        if let Some(ref url) = asset_index_url {
+            if let Some(ref path) = asset_index_path {
+                if !path.exists() {
+                    first_phase_tasks.push(DownloadTask {
+                        url: url.clone(),
+                        path: path.clone(),
+                        task_type: "index".to_string(),
+                    });
+                }
+            }
+        }
+
+        if !first_phase_tasks.is_empty() {
+            println!("Downloading metadata...");
+            let client = Arc::new(client);
+            let results = stream::iter(first_phase_tasks)
+                .map(|task| {
+                    let client = Arc::clone(&client);
+                    let url = task.url.clone();
+                    let path = task.path.clone();
+                    let task_type = task.task_type.clone();
+                    tokio::spawn(async move {
+                        (task_type, Self::download_file(&client, &url, &path).await)
+                    })
+                })
+                .buffer_unordered(MAX_CONCURRENT_DOWNLOADS)
+                .collect::<Vec<_>>()
+                .await;
+
+            for result in results {
+                if let Ok((task_type, download_result)) = result {
+                    if let Err(e) = download_result {
+                        anyhow::bail!("Failed to download {}: {}", task_type, e);
+                    }
+                }
+            }
+        }
+
+        // Now collect library and asset tasks
+        let client = Client::new();
+        let version_natives_dir = version_dir.join("natives");
+        fs::create_dir_all(&version_natives_dir)?;
+        self.collect_library_download_tasks(&version_details, version_id, &version_natives_dir, &mut tasks, &mut extraction_tasks);
+
+        // ARM64 natives for Linux
+        if std::env::consts::OS == "linux" && std::env::consts::ARCH == "aarch64" {
+            self.collect_lwjgl_arm64_download_tasks(&version_details, version_id, &version_natives_dir, &mut tasks, &mut extraction_tasks);
+        }
+
+        // Assets (now index should exist)
+        if let Some(ref index_path) = asset_index_path {
+            if index_path.exists() {
+                self.collect_asset_download_tasks(index_path, &mut tasks);
+            }
+        }
+
+        if tasks.is_empty() && extraction_tasks.is_empty() {
+            println!("All files already downloaded for version {}!", version_id);
+            // Still need to extract natives if they exist
+            for (jar_path, extract_dir) in &extraction_tasks {
+                if jar_path.exists() {
+                    self.extract_lwjgl3_native_library(jar_path, extract_dir)?;
+                }
+            }
+            return Ok(());
+        }
+
+        // Create progress bar
+        let pb = Arc::new(ProgressBar::new(tasks.len() as u64));
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
+            .unwrap()
+            .progress_chars("#>-"));
+
+        // Download all files concurrently
+        let client = Arc::new(client);
+        let counter = Arc::new(AtomicU64::new(0));
+        let pb_clone = Arc::clone(&pb);
+
+        let download_results = stream::iter(tasks)
+            .map(|task| {
+                let client = Arc::clone(&client);
+                let counter = Arc::clone(&counter);
+                let pb = Arc::clone(&pb_clone);
+                tokio::spawn(async move {
+                    let result = Self::download_file(&client, &task.url, &task.path).await;
+                    if result.is_ok() {
+                        let downloaded = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                        pb.set_position(downloaded);
+                    }
+                    (task, result)
+                })
+            })
+            .buffer_unordered(MAX_CONCURRENT_DOWNLOADS)
+            .collect::<Vec<_>>()
+            .await;
+
+        // Check for errors
+        for result in download_results {
+            if let Ok((task, download_result)) = result {
+                if let Err(e) = download_result {
+                    pb.println(format!("Failed to download {} ({}): {}", task.task_type, task.url, e));
+                }
+            }
+        }
+
+        pb.finish_with_message(format!("Downloaded {} files", counter.load(Ordering::SeqCst)));
+
+        // Extract native libraries
+        for (jar_path, extract_dir) in extraction_tasks {
+            if jar_path.exists() {
+                self.extract_lwjgl3_native_library(&jar_path, &extract_dir)?;
+            }
         }
 
         // Save version JSON
@@ -68,23 +202,6 @@ impl Installer {
         let version_json_content = serde_json::to_string_pretty(&version_details)?;
         fs::write(&version_json_path, version_json_content)?;
 
-        // Download libraries
-        let version_natives_dir = version_dir.join("natives");
-        fs::create_dir_all(&version_natives_dir)?;
-        self.download_libraries_with_simple_progress(&client, &version_details, &version_natives_dir, &counter, &pb).await?;
-
-        // Install ARM64 natives for Linux
-        self.install_lwjgl_arm64_natives_with_simple_progress(&client, version_id, &version_details, &counter, &pb).await?;
-
-        // Download assets
-        if let Some(asset_index) = &version_details.asset_index {
-            let asset_index_path = self.assets_indexes_dir.join(format!("{}.json", asset_index.id));
-            self.download_file_with_simple_progress(&client, &asset_index.url, &asset_index_path, &counter, &pb).await?;
-            self.download_assets_with_simple_progress(&client, &asset_index_path, &counter, &pb).await?;
-        }
-
-        let downloaded = counter.load(Ordering::SeqCst);
-        pb.finish_with_message(format!("Downloaded {} files for version {}", downloaded, version_id));
         println!("Version {} installed successfully!", version_id);
         Ok(())
     }
@@ -105,129 +222,78 @@ impl Installer {
         Ok((version_info.clone(), version_details))
     }
 
-    async fn download_libraries_with_simple_progress(
+    fn collect_library_download_tasks(
         &self,
-        client: &Client,
         version_details: &VersionDetails,
+        _version_id: &str,
         version_natives_dir: &Path,
-        counter: &Arc<AtomicU64>,
-        pb: &Arc<ProgressBar>,
-    ) -> anyhow::Result<()> {
+        tasks: &mut Vec<DownloadTask>,
+        extraction_tasks: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    ) {
         for library in &version_details.libraries {
             let Some(downloads) = &library.downloads else {
                 continue;
             };
 
-            self.process_library_artifact_with_simple_progress(client, downloads, counter, pb).await?;
-
-            let Some(classifiers) = &downloads.classifiers else {
-                continue;
-            };
-
-            self.process_native_artifact_with_simple_progress(client, classifiers, version_natives_dir, counter, pb)
-                .await?;
-            self.process_other_natives_with_simple_progress(client, classifiers, version_natives_dir, counter, pb)
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn process_library_artifact_with_simple_progress(
-        &self,
-        client: &Client,
-        downloads: &LibraryDownloads,
-        counter: &Arc<AtomicU64>,
-        pb: &Arc<ProgressBar>,
-    ) -> anyhow::Result<()> {
-        let Some(artifact) = &downloads.artifact else {
-            return Ok(());
-        };
-        let library_path = self.libraries_dir.join(&artifact.path);
-        if !library_path.exists() {
-            if let Some(parent) = library_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            self.download_file_with_simple_progress(client, &artifact.url, &library_path, counter, pb)
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn process_native_artifact_with_simple_progress(
-        &self,
-        client: &Client,
-        classifiers: &Classifiers,
-        version_natives_dir: &Path,
-        counter: &Arc<AtomicU64>,
-        pb: &Arc<ProgressBar>,
-    ) -> anyhow::Result<()> {
-        let Some(artifact) = self.get_native_artifact(classifiers) else {
-            return Ok(());
-        };
-        let native_path = self.libraries_dir.join(&artifact.path);
-        if !native_path.exists() {
-            if let Some(parent) = native_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            self.download_file_with_simple_progress(client, &artifact.url, &native_path, counter, pb)
-                .await?;
-        }
-        self.extract_lwjgl3_native_library(&native_path, version_natives_dir)?;
-        Ok(())
-    }
-
-    async fn process_other_natives_with_simple_progress(
-        &self,
-        client: &Client,
-        classifiers: &Classifiers,
-        version_natives_dir: &Path,
-        counter: &Arc<AtomicU64>,
-        pb: &Arc<ProgressBar>,
-    ) -> anyhow::Result<()> {
-        let os_name = match std::env::consts::OS {
-            "windows" => "windows",
-            "linux" => "linux",
-            "macos" => "macos",
-            _ => return Ok(()),
-        };
-        let arch_name = match std::env::consts::ARCH {
-            "aarch64" => "aarch64",
-            "x86_64" => "x64",
-            _ => std::env::consts::ARCH,
-        };
-
-        for (classifier_name, artifact) in &classifiers.other {
-            let is_native_for_os_and_arch = classifier_name
-                == &format!("natives-{}-{}", os_name, arch_name)
-                || (arch_name == "x64" && classifier_name == &format!("natives-{}", os_name));
-
-            if is_native_for_os_and_arch || classifier_name == &format!("natives-{}", os_name) {
-                let native_path = self.libraries_dir.join(&artifact.path);
-                if !native_path.exists() {
-                    if let Some(parent) = native_path.parent() {
-                        fs::create_dir_all(parent)?;
+            if let Some(artifact) = &downloads.artifact {
+                let library_path = self.libraries_dir.join(&artifact.path);
+                if !library_path.exists() {
+                    if let Some(parent) = library_path.parent() {
+                        let _ = fs::create_dir_all(parent);
                     }
-                    self.download_file_with_simple_progress(client, &artifact.url, &native_path, counter, pb)
-                        .await?;
+                    tasks.push(DownloadTask {
+                        url: artifact.url.clone(),
+                        path: library_path,
+                        task_type: "library".to_string(),
+                    });
                 }
-                self.extract_lwjgl3_native_library(&native_path, version_natives_dir)?;
+            }
+
+            if let Some(classifiers) = &downloads.classifiers {
+                if let Some(artifact) = self.get_native_artifact(classifiers) {
+                    let native_path = self.libraries_dir.join(&artifact.path);
+                    if !native_path.exists() {
+                        if let Some(parent) = native_path.parent() {
+                            let _ = fs::create_dir_all(parent);
+                        }
+                        tasks.push(DownloadTask {
+                            url: artifact.url.clone(),
+                            path: native_path.clone(),
+                            task_type: "native".to_string(),
+                        });
+                    }
+                    extraction_tasks.push((native_path, version_natives_dir.to_path_buf()));
+                }
+
+                // Other natives
+                for (classifier_name, artifact) in &classifiers.other {
+                    if classifier_name.contains("natives-") {
+                        let native_path = self.libraries_dir.join(&artifact.path);
+                        if !native_path.exists() {
+                            if let Some(parent) = native_path.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                            tasks.push(DownloadTask {
+                                url: artifact.url.clone(),
+                                path: native_path.clone(),
+                                task_type: "native".to_string(),
+                            });
+                        }
+                        extraction_tasks.push((native_path, version_natives_dir.to_path_buf()));
+                    }
+                }
             }
         }
-        Ok(())
     }
 
-    async fn install_lwjgl_arm64_natives_with_simple_progress(
+    fn collect_lwjgl_arm64_download_tasks(
         &self,
-        client: &Client,
-        version_id: &str,
         version_details: &VersionDetails,
-        counter: &Arc<AtomicU64>,
-        pb: &Arc<ProgressBar>,
-    ) -> anyhow::Result<()> {
-        if std::env::consts::OS != "linux" || std::env::consts::ARCH != "aarch64" {
-            return Ok(());
-        }
-
+        _version_id: &str,
+        version_natives_dir: &Path,
+        tasks: &mut Vec<DownloadTask>,
+        extraction_tasks: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    ) {
         let mut lwjgl_versions: HashMap<String, String> = HashMap::new();
         let target_lwjgl_modules: HashSet<&str> = [
             "lwjgl",
@@ -257,16 +323,12 @@ impl Installer {
         }
 
         if lwjgl_versions.is_empty() {
-            return Ok(());
+            return;
         }
-
-        let os_name = "linux";
-        let arch_name = "arm64";
-        let classifier = format!("natives-{}-{}", os_name, arch_name);
-        let temp_dir = tempfile::tempdir()?;
 
         for (module_artifact_id, module_version) in &lwjgl_versions {
             let group_path = "org/lwjgl";
+            let classifier = "natives-linux-arm64";
             let url = format!(
                 "{}/{}/{}/{}-{}-{}.jar",
                 MAVEN_BASE_URL,
@@ -277,48 +339,57 @@ impl Installer {
                 classifier
             );
 
-            let temp_file_path = temp_dir.path().join(format!(
-                "{}-{}-{}.jar",
+            let temp_file_path = std::env::temp_dir().join(format!(
+                "mclc-{}-{}-{}.jar",
                 module_artifact_id, module_version, classifier
             ));
 
-            let download_result = self
-                .download_file_with_simple_progress(&client, &url, &temp_file_path, counter, pb)
-                .await;
-
-            if download_result.is_err() {
-                continue;
-            }
-
-            let version_natives_dir = self.versions_dir.join(version_id).join("natives");
-            self.extract_lwjgl3_native_library(&temp_file_path, &version_natives_dir)?;
+            tasks.push(DownloadTask {
+                url,
+                path: temp_file_path.clone(),
+                task_type: "arm64-native".to_string(),
+            });
+            extraction_tasks.push((temp_file_path, version_natives_dir.to_path_buf()));
         }
-
-        Ok(())
     }
 
-    async fn download_assets_with_simple_progress(
-        &self,
-        client: &Client,
-        asset_index_path: &Path,
-        counter: &Arc<AtomicU64>,
-        pb: &Arc<ProgressBar>,
-    ) -> anyhow::Result<()> {
-        let asset_index_content = fs::read_to_string(asset_index_path)?;
-        let assets_index: AssetsIndex = serde_json::from_str(&asset_index_content)?;
+    fn collect_asset_download_tasks(&self, asset_index_path: &Path, tasks: &mut Vec<DownloadTask>) {
+        if let Ok(asset_index_content) = fs::read_to_string(asset_index_path) {
+            if let Ok(assets_index) = serde_json::from_str::<AssetsIndex>(&asset_index_content) {
+                for (_name, asset_object) in &assets_index.objects {
+                    let hash = &asset_object.hash;
+                    let first_two = &hash[..2];
+                    let asset_path = self.assets_objects_dir.join(first_two).join(hash);
 
-        for (_name, asset_object) in &assets_index.objects {
-            let hash = &asset_object.hash;
-            let first_two = &hash[..2];
-            let asset_path = self.assets_objects_dir.join(first_two).join(hash);
-
-            if !asset_path.exists() {
-                if let Some(parent) = asset_path.parent() {
-                    fs::create_dir_all(parent)?;
+                    if !asset_path.exists() {
+                        if let Some(parent) = asset_path.parent() {
+                            let _ = fs::create_dir_all(parent);
+                        }
+                        let asset_url = format!("{}/{}/{}", ASSET_BASE_URL, first_two, hash);
+                        tasks.push(DownloadTask {
+                            url: asset_url,
+                            path: asset_path,
+                            task_type: "asset".to_string(),
+                        });
+                    }
                 }
-                let asset_url = format!("{}/{}/{}", ASSET_BASE_URL, first_two, hash);
-                self.download_file_with_simple_progress(client, &asset_url, &asset_path, counter, pb).await?;
             }
+        }
+    }
+
+    async fn download_file(client: &Client, url: &str, path: &Path) -> anyhow::Result<()> {
+        if path.exists() {
+            return Ok(());
+        }
+
+        let response = client.get(url).send().await?;
+
+        let mut file = File::create(path).context("Failed to create file")?;
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Failed to read chunk")?;
+            file.write_all(&chunk).context("Failed to write chunk")?;
         }
 
         Ok(())
@@ -357,35 +428,6 @@ impl Installer {
                 .or_else(|| classifiers.other.get("natives-macos")),
             _ => None,
         }
-    }
-
-    async fn download_file_with_simple_progress(
-        &self,
-        client: &Client,
-        url: &str,
-        path: &Path,
-        counter: &Arc<AtomicU64>,
-        pb: &Arc<ProgressBar>,
-    ) -> anyhow::Result<()> {
-        if path.exists() {
-            return Ok(());
-        }
-
-        let response = client.get(url).send().await?;
-
-        let mut file = File::create(path).context("Failed to create file")?;
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.context("Failed to read chunk")?;
-            file.write_all(&chunk).context("Failed to write chunk")?;
-        }
-
-        // Update progress
-        let downloaded = counter.fetch_add(1, Ordering::SeqCst) + 1;
-        pb.set_position(downloaded);
-
-        Ok(())
     }
 
     fn extract_lwjgl3_native_library(&self, jar_path: &Path, extract_dir: &Path) -> anyhow::Result<()> {
