@@ -1,9 +1,13 @@
 use crate::models::*;
 use anyhow::Context;
+use futures_util::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
 const VERSION_MANIFEST_URL: &str = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
 const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net";
@@ -43,15 +47,20 @@ impl Installer {
         let version_dir = self.versions_dir.join(version_id);
         fs::create_dir_all(&version_dir)?;
 
+        // Use a simple spinner for download progress
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(ProgressStyle::default_spinner()
+            .template("{spinner:.green} Downloading files... {msg}")
+            .unwrap());
+        pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
+        let counter = Arc::new(AtomicU64::new(0));
+        let pb = Arc::new(pb);
+
         // Download client JAR
         if let Some(downloads) = &version_details.downloads {
-            println!("Downloading client JAR...");
-            self.download_file(
-                &client,
-                &downloads.client.url,
-                &version_dir.join(format!("{}.jar", version_id)),
-            )
-            .await?;
+            let client_jar_path = version_dir.join(format!("{}.jar", version_id));
+            self.download_file_with_simple_progress(&client, &downloads.client.url, &client_jar_path, &counter, &pb).await?;
         }
 
         // Save version JSON
@@ -60,28 +69,22 @@ impl Installer {
         fs::write(&version_json_path, version_json_content)?;
 
         // Download libraries
-        println!("Downloading libraries...");
         let version_natives_dir = version_dir.join("natives");
         fs::create_dir_all(&version_natives_dir)?;
-        self.download_libraries(&client, &version_details, &version_natives_dir)
-            .await?;
+        self.download_libraries_with_simple_progress(&client, &version_details, &version_natives_dir, &counter, &pb).await?;
 
         // Install ARM64 natives for Linux
-        self.install_lwjgl_arm64_natives(&client, version_id, &version_details)
-            .await?;
+        self.install_lwjgl_arm64_natives_with_simple_progress(&client, version_id, &version_details, &counter, &pb).await?;
 
         // Download assets
         if let Some(asset_index) = &version_details.asset_index {
-            println!("Downloading asset index...");
-            let asset_index_path = self
-                .assets_indexes_dir
-                .join(format!("{}.json", asset_index.id));
-            self.download_file(&client, &asset_index.url, &asset_index_path)
-                .await?;
-            println!("Downloading assets...");
-            self.download_assets(&client, &asset_index_path).await?;
+            let asset_index_path = self.assets_indexes_dir.join(format!("{}.json", asset_index.id));
+            self.download_file_with_simple_progress(&client, &asset_index.url, &asset_index_path, &counter, &pb).await?;
+            self.download_assets_with_simple_progress(&client, &asset_index_path, &counter, &pb).await?;
         }
 
+        let downloaded = counter.load(Ordering::SeqCst);
+        pb.finish_with_message(format!("Downloaded {} files for version {}", downloaded, version_id));
         println!("Version {} installed successfully!", version_id);
         Ok(())
     }
@@ -98,40 +101,43 @@ impl Installer {
             .find(|v| v.id == version_id)
             .ok_or_else(|| anyhow::anyhow!("Version {} not found", version_id))?;
 
-        println!("Fetching version details...");
         let version_details: VersionDetails = client.get(&version_info.url).send().await?.json().await?;
         Ok((version_info.clone(), version_details))
     }
 
-    async fn download_libraries(
+    async fn download_libraries_with_simple_progress(
         &self,
         client: &Client,
         version_details: &VersionDetails,
         version_natives_dir: &Path,
+        counter: &Arc<AtomicU64>,
+        pb: &Arc<ProgressBar>,
     ) -> anyhow::Result<()> {
         for library in &version_details.libraries {
             let Some(downloads) = &library.downloads else {
                 continue;
             };
 
-            self.process_library_artifact(client, downloads).await?;
+            self.process_library_artifact_with_simple_progress(client, downloads, counter, pb).await?;
 
             let Some(classifiers) = &downloads.classifiers else {
                 continue;
             };
 
-            self.process_native_artifact(client, classifiers, version_natives_dir)
+            self.process_native_artifact_with_simple_progress(client, classifiers, version_natives_dir, counter, pb)
                 .await?;
-            self.process_other_natives(client, classifiers, version_natives_dir)
+            self.process_other_natives_with_simple_progress(client, classifiers, version_natives_dir, counter, pb)
                 .await?;
         }
         Ok(())
     }
 
-    async fn process_library_artifact(
+    async fn process_library_artifact_with_simple_progress(
         &self,
         client: &Client,
         downloads: &LibraryDownloads,
+        counter: &Arc<AtomicU64>,
+        pb: &Arc<ProgressBar>,
     ) -> anyhow::Result<()> {
         let Some(artifact) = &downloads.artifact else {
             return Ok(());
@@ -141,17 +147,19 @@ impl Installer {
             if let Some(parent) = library_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            self.download_file(client, &artifact.url, &library_path)
+            self.download_file_with_simple_progress(client, &artifact.url, &library_path, counter, pb)
                 .await?;
         }
         Ok(())
     }
 
-    async fn process_native_artifact(
+    async fn process_native_artifact_with_simple_progress(
         &self,
         client: &Client,
         classifiers: &Classifiers,
         version_natives_dir: &Path,
+        counter: &Arc<AtomicU64>,
+        pb: &Arc<ProgressBar>,
     ) -> anyhow::Result<()> {
         let Some(artifact) = self.get_native_artifact(classifiers) else {
             return Ok(());
@@ -161,18 +169,20 @@ impl Installer {
             if let Some(parent) = native_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            self.download_file(client, &artifact.url, &native_path)
+            self.download_file_with_simple_progress(client, &artifact.url, &native_path, counter, pb)
                 .await?;
         }
         self.extract_lwjgl3_native_library(&native_path, version_natives_dir)?;
         Ok(())
     }
 
-    async fn process_other_natives(
+    async fn process_other_natives_with_simple_progress(
         &self,
         client: &Client,
         classifiers: &Classifiers,
         version_natives_dir: &Path,
+        counter: &Arc<AtomicU64>,
+        pb: &Arc<ProgressBar>,
     ) -> anyhow::Result<()> {
         let os_name = match std::env::consts::OS {
             "windows" => "windows",
@@ -197,7 +207,7 @@ impl Installer {
                     if let Some(parent) = native_path.parent() {
                         fs::create_dir_all(parent)?;
                     }
-                    self.download_file(client, &artifact.url, &native_path)
+                    self.download_file_with_simple_progress(client, &artifact.url, &native_path, counter, pb)
                         .await?;
                 }
                 self.extract_lwjgl3_native_library(&native_path, version_natives_dir)?;
@@ -206,17 +216,17 @@ impl Installer {
         Ok(())
     }
 
-    async fn install_lwjgl_arm64_natives(
+    async fn install_lwjgl_arm64_natives_with_simple_progress(
         &self,
         client: &Client,
         version_id: &str,
         version_details: &VersionDetails,
+        counter: &Arc<AtomicU64>,
+        pb: &Arc<ProgressBar>,
     ) -> anyhow::Result<()> {
         if std::env::consts::OS != "linux" || std::env::consts::ARCH != "aarch64" {
             return Ok(());
         }
-
-        println!("LWJGL ARM64: Checking for LWJGL libraries to replace with ARM64 versions...");
 
         let mut lwjgl_versions: HashMap<String, String> = HashMap::new();
         let target_lwjgl_modules: HashSet<&str> = [
@@ -247,17 +257,8 @@ impl Installer {
         }
 
         if lwjgl_versions.is_empty() {
-            println!(
-                "LWJGL ARM64: No LWJGL libraries found in version manifest for {}, skipping ARM64 native install.",
-                version_id
-            );
             return Ok(());
         }
-
-        println!(
-            "LWJGL ARM64: Found LWJGL modules for version {}: {:?}",
-            version_id, lwjgl_versions
-        );
 
         let os_name = "linux";
         let arch_name = "arm64";
@@ -276,70 +277,37 @@ impl Installer {
                 classifier
             );
 
-            println!("LWJGL ARM64: Preparing to download {}", url);
             let temp_file_path = temp_dir.path().join(format!(
                 "{}-{}-{}.jar",
                 module_artifact_id, module_version, classifier
             ));
 
-            println!(
-                "LWJGL ARM64: Downloading {}:{} ARM64 natives...",
-                module_artifact_id, module_version
-            );
-
             let download_result = self
-                .download_file(&client, &url, &temp_file_path)
+                .download_file_with_simple_progress(&client, &url, &temp_file_path, counter, pb)
                 .await;
 
-            if let Err(e) = download_result {
-                let is_not_found = e
-                    .downcast_ref::<reqwest::Error>()
-                    .and_then(|reqwest_err| reqwest_err.status())
-                    .map(|status| status == reqwest::StatusCode::NOT_FOUND)
-                    .unwrap_or(false);
-
-                let error_msg = if is_not_found {
-                    format!(
-                        "LWJGL ARM64: Warning: ARM64 native library not found at {}. It seems this LWJGL version ({}) does not provide official ARM64 binaries. Skipping this module.",
-                        url, module_version
-                    )
-                } else {
-                    format!(
-                        "LWJGL ARM64: Warning: Failed to download {} ({}). Error: {}. Skipping this module.",
-                        module_artifact_id, url, e
-                    )
-                };
-                println!("{}", error_msg);
+            if download_result.is_err() {
                 continue;
             }
 
             let version_natives_dir = self.versions_dir.join(version_id).join("natives");
-            println!(
-                "LWJGL ARM64: Extracting {}:{} natives to {:?}",
-                module_artifact_id, module_version, version_natives_dir
-            );
             self.extract_lwjgl3_native_library(&temp_file_path, &version_natives_dir)?;
         }
 
-        println!(
-            "LWJGL ARM64: Installation of ARM64 native libraries completed (where available) for version {}.",
-            version_id
-        );
         Ok(())
     }
 
-    async fn download_assets(&self, client: &Client, asset_index_path: &Path) -> anyhow::Result<()> {
+    async fn download_assets_with_simple_progress(
+        &self,
+        client: &Client,
+        asset_index_path: &Path,
+        counter: &Arc<AtomicU64>,
+        pb: &Arc<ProgressBar>,
+    ) -> anyhow::Result<()> {
         let asset_index_content = fs::read_to_string(asset_index_path)?;
         let assets_index: AssetsIndex = serde_json::from_str(&asset_index_content)?;
-        let total_assets = assets_index.objects.len();
-        let mut downloaded = 0;
 
         for (_name, asset_object) in &assets_index.objects {
-            downloaded += 1;
-            if downloaded % 50 == 0 || downloaded == total_assets {
-                println!("Downloading assets: {}/{}", downloaded, total_assets);
-            }
-
             let hash = &asset_object.hash;
             let first_two = &hash[..2];
             let asset_path = self.assets_objects_dir.join(first_two).join(hash);
@@ -349,11 +317,10 @@ impl Installer {
                     fs::create_dir_all(parent)?;
                 }
                 let asset_url = format!("{}/{}/{}", ASSET_BASE_URL, first_two, hash);
-                self.download_file(client, &asset_url, &asset_path).await?;
+                self.download_file_with_simple_progress(client, &asset_url, &asset_path, counter, pb).await?;
             }
         }
 
-        println!("Assets downloaded successfully!");
         Ok(())
     }
 
@@ -392,13 +359,32 @@ impl Installer {
         }
     }
 
-    async fn download_file(&self, client: &Client, url: &str, path: &Path) -> anyhow::Result<()> {
+    async fn download_file_with_simple_progress(
+        &self,
+        client: &Client,
+        url: &str,
+        path: &Path,
+        counter: &Arc<AtomicU64>,
+        pb: &Arc<ProgressBar>,
+    ) -> anyhow::Result<()> {
         if path.exists() {
             return Ok(());
         }
+
         let response = client.get(url).send().await?;
-        let bytes = response.bytes().await?;
-        fs::write(path, bytes)?;
+
+        let mut file = File::create(path).context("Failed to create file")?;
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Failed to read chunk")?;
+            file.write_all(&chunk).context("Failed to write chunk")?;
+        }
+
+        // Update progress
+        let downloaded = counter.fetch_add(1, Ordering::SeqCst) + 1;
+        pb.set_position(downloaded);
+
         Ok(())
     }
 
