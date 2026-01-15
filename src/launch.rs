@@ -4,6 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 #[derive(Debug)]
 pub struct Launcher {
     pub minecraft_dir: PathBuf,
@@ -74,17 +77,19 @@ impl Launcher {
             command_args
         );
 
-        let status = Command::new(&java_path)
-            .args(&command_args)
-            .status()
-            .context("Failed to start Minecraft")?;
+        // Spawn the game process and let launcher exit
+        let mut cmd = Command::new(&java_path);
+        cmd.args(&command_args);
 
-        if status.success() {
-            println!("Minecraft exited successfully");
-        } else {
-            eprintln!("Minecraft exited with error code: {:?}", status.code());
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x00000008); // DETACHED_PROCESS
         }
 
+        let _ = cmd.spawn().context("Failed to start Minecraft")?;
+
+        println!("Minecraft launched successfully");
+        println!("Please wait patiently for the game window to appear");
         Ok(())
     }
 
