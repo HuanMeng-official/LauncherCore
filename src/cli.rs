@@ -6,6 +6,8 @@ pub enum AuthType {
     Offline,
     #[value(name = "msa")]
     Msa,
+    #[value(name = "external")]
+    External,
 }
 
 #[derive(Parser)]
@@ -57,9 +59,28 @@ pub enum Commands {
         /// Authentication type
         #[arg(long = "auth", value_enum, default_value_t = AuthType::Offline)]
         auth_type: AuthType,
+
+        /// Yggdrasil API URL (for external auth)
+        #[arg(long = "api-url")]
+        api_url: Option<String>,
     },
 
     /// Login to Microsoft account
     #[command(long_about = "Login to Microsoft account via device code flow to get access token for launching game")]
     Login,
+
+    /// Login to external authentication server (authlib-injector)
+    #[command(long_about = "Login to external Yggdrasil authentication server")]
+    ExternalLogin {
+        /// Account identifier (email or username)
+        identifier: String,
+
+        /// Password
+        #[arg(short = 'p', long)]
+        password: String,
+
+        /// API URL of the auth server
+        #[arg(short = 'a', long = "api-url")]
+        api_url: String,
+    },
 }

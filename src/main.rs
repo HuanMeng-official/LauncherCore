@@ -5,12 +5,14 @@ mod launch;
 mod launch_manager;
 mod models;
 mod auth;
+mod yggdrasil;
 
 use anyhow::Result;
 use clap::Parser;
 use cli::{AuthType, Cli, Commands};
 use error::LauncherError;
 use launch_manager::LauncherManager;
+use yggdrasil::YggdrasilAuthenticator;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -43,6 +45,7 @@ async fn main() -> Result<()> {
             access_token,
             jvm_args,
             auth_type,
+            api_url,
         } => match auth_type {
             AuthType::Offline => {
                 let launch_username = username.clone().unwrap_or_else(|| "Player".to_string());
@@ -57,6 +60,8 @@ async fn main() -> Result<()> {
                     "legacy".to_string(),
                     jvm_args.clone(),
                     global_java_path,
+                    None,
+                    None,
                 )?;
             }
             AuthType::Msa => {
@@ -70,6 +75,8 @@ async fn main() -> Result<()> {
                             "msa".to_string(),
                             jvm_args.clone(),
                             global_java_path,
+                            None,
+                            None,
                         )?;
                     }
                     None => {
@@ -78,7 +85,66 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+            AuthType::External => {
+                let api_url = api_url.as_ref().expect("--api-url is required for external auth");
+                let Some(username) = username else {
+                    eprintln!("--username is required for external auth");
+                    std::process::exit(1);
+                };
+
+                // Try to find existing account
+                if let Some(account) = manager.find_account_by_identifier(&username, api_url)? {
+                    // Validate the token
+                    let authenticator = YggdrasilAuthenticator::new(account.api_url.clone());
+                    if authenticator.validate(&account.access_token, Some(&account.client_token)).await {
+                        println!("Using cached credentials for {}", account.get_display_name());
+
+                        // Download authlib-injector if needed
+                        let authlib_injector = manager.get_authlib_injector();
+                        let jar_path = authlib_injector.get_or_download().await?;
+
+                        // Pre-fetch metadata
+                        let prefetched = authenticator.pre_fetch_metadata().await?;
+
+                        manager.launch(
+                            &version,
+                            account.name.clone(),
+                            account.access_token.clone(),
+                            account.uuid.clone(),
+                            "mojang".to_string(),
+                            jvm_args.clone(),
+                            global_java_path,
+                            Some(jar_path),
+                            Some(prefetched),
+                        )?;
+                    } else {
+                        eprintln!("Cached credentials expired. Please login again using external-login command.");
+                        std::process::exit(1);
+                    }
+                } else {
+                    eprintln!("No cached credentials found for {} on {}. Please login first using external-login command.",
+                        username, api_url);
+                    std::process::exit(1);
+                }
+            }
         },
+        Commands::ExternalLogin {
+            identifier,
+            password,
+            api_url,
+        } => {
+            match manager.external_login(&identifier, &password, &api_url).await {
+                Ok(_) => {
+                    println!("External login successful!");
+                    println!("You can now launch with: mclc launch --version <version> --auth external --api-url {} --username {}",
+                        api_url, identifier);
+                }
+                Err(e) => {
+                    eprintln!("External authentication failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 
     Ok(())

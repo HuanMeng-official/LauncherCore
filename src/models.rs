@@ -211,3 +211,123 @@ pub struct AssetObject {
     pub hash: String,
     pub size: u64,
 }
+
+// Yggdrasil API models
+#[derive(Debug, Deserialize, Serialize)]
+pub struct YggdrasilApiMetadata {
+    #[serde(rename = "meta")]
+    pub meta: Option<YggdrasilMeta>,
+    #[serde(rename = "skinDomains")]
+    pub skin_domains: Vec<String>,
+    #[serde(rename = "signaturePublickey")]
+    pub signature_public_key: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct YggdrasilMeta {
+    #[serde(rename = "serverName")]
+    pub server_name: Option<String>,
+    #[serde(rename = "implementationName")]
+    pub implementation_name: Option<String>,
+    #[serde(rename = "implementationVersion")]
+    pub implementation_version: Option<String>,
+    pub links: Option<YggdrasilLinks>,
+    #[serde(rename = "feature.non_email_login")]
+    pub feature_non_email_login: Option<bool>,
+    #[serde(rename = "feature.legacy_skin_api")]
+    pub feature_legacy_skin_api: Option<bool>,
+    #[serde(rename = "feature.no_mojang_namespace")]
+    pub feature_no_mojang_namespace: Option<bool>,
+    #[serde(rename = "feature.enable_mojang_anti_features")]
+    pub feature_enable_mojang_anti_features: Option<bool>,
+    #[serde(rename = "feature.enable_profile_key")]
+    pub feature_enable_profile_key: Option<bool>,
+    #[serde(rename = "feature.username_check")]
+    pub feature_username_check: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct YggdrasilLinks {
+    pub homepage: Option<String>,
+    pub register: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct YggdrasilAuthenticateRequest {
+    pub username: String,
+    pub password: String,
+    #[serde(rename = "clientToken", skip_serializing_if = "Option::is_none")]
+    pub client_token: Option<String>,
+    #[serde(rename = "requestUser")]
+    pub request_user: bool,
+    pub agent: YggdrasilAgent,
+}
+
+#[derive(Debug, Serialize)]
+pub struct YggdrasilAgent {
+    pub name: String,
+    pub version: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct YggdrasilAuthenticateResponse {
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "clientToken")]
+    pub client_token: String,
+    #[serde(rename = "availableProfiles")]
+    pub available_profiles: Vec<YggdrasilProfile>,
+    #[serde(rename = "selectedProfile")]
+    pub selected_profile: Option<YggdrasilProfile>,
+    pub user: Option<YggdrasilUser>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct YggdrasilProfile {
+    pub id: String,
+    pub name: String,
+    pub properties: Option<Vec<YggdrasilProperty>>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct YggdrasilProperty {
+    pub name: String,
+    pub value: String,
+    pub signature: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct YggdrasilUser {
+    pub id: String,
+    pub properties: Vec<YggdrasilProperty>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct YggdrasilValidateRequest {
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "clientToken", skip_serializing_if = "Option::is_none")]
+    pub client_token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct YggdrasilRefreshRequest {
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "clientToken", skip_serializing_if = "Option::is_none")]
+    pub client_token: Option<String>,
+    #[serde(rename = "requestUser")]
+    pub request_user: bool,
+    #[serde(rename = "selectedProfile")]
+    pub selected_profile: Option<YggdrasilProfile>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct YggdrasilErrorResponse {
+    pub error: String,
+    #[serde(rename = "errorMessage")]
+    pub error_message: String,
+    #[allow(dead_code)]
+    pub cause: Option<String>,
+}

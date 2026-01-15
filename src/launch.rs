@@ -25,6 +25,8 @@ impl Launcher {
         user_type: String,
         jvm_args: Option<String>,
         java_path_override: Option<String>,
+        authlib_injector_jar: Option<std::path::PathBuf>,
+        prefetched_metadata: Option<String>,
     ) -> anyhow::Result<()> {
         println!(
             "Launching Minecraft version: {} for user: {}",
@@ -51,12 +53,18 @@ impl Launcher {
 
         // Verify and extract native libraries if needed
         let version_natives_dir = version_dir.join("natives");
-        self.verify_and_extract_natives(&version_details, &version_natives_dir)?;
+        self.verify_and_extract_natives(
+            &version_details, &version_natives_dir)?;
 
         let classpath = self.build_classpath(
             &version_dir, &version_details)?;
 
-        let mut command_args = self.build_jvm_arguments(jvm_args, &version_natives_dir);
+        let mut command_args = self.build_jvm_arguments(
+            jvm_args,
+            &version_natives_dir,
+            authlib_injector_jar.as_ref(),
+            prefetched_metadata.as_ref()
+        );
         command_args.push("-cp".to_string());
         command_args.push(classpath);
         command_args.push(version_details.main_class.clone());
@@ -156,7 +164,8 @@ impl Launcher {
                         if let Some(artifact) = self.get_native_artifact(classifiers) {
                             let native_path = self.libraries_dir.join(&artifact.path);
                             if native_path.exists() {
-                                self.extract_lwjgl3_native_library(&native_path, natives_dir)?;
+                                self.extract_lwjgl3_native_library(
+                                    &native_path, natives_dir)?;
                             }
                         }
 
@@ -164,7 +173,8 @@ impl Launcher {
                             if classifier_name.contains("natives-") {
                                 let native_path = self.libraries_dir.join(&artifact.path);
                                 if native_path.exists() {
-                                    self.extract_lwjgl3_native_library(&native_path, natives_dir)?;
+                                    self.extract_lwjgl3_native_library(
+                                        &native_path, natives_dir)?;
                                 }
                             }
                         }
@@ -176,7 +186,9 @@ impl Launcher {
         Ok(())
     }
 
-    fn check_natives_exist(&self, natives_dir: &Path) -> bool {
+    fn check_natives_exist(
+        &self, natives_dir: &Path
+    ) -> bool {
         if !natives_dir.exists() {
             return false;
         }
@@ -201,7 +213,9 @@ impl Launcher {
         false
     }
 
-    fn should_include_library(&self, library: &Library) -> bool {
+    fn should_include_library(
+        &self, library: &Library
+    ) -> bool {
         if let Some(rules) = &library.rules {
             let mut allowed = false;
             for rule in rules {
@@ -237,7 +251,9 @@ impl Launcher {
         true
     }
 
-    fn get_native_artifact<'a>(&self, classifiers: &'a Classifiers) -> Option<&'a crate::models::Artifact> {
+    fn get_native_artifact<'a>(
+        &self, classifiers: &'a Classifiers
+    ) -> Option<&'a crate::models::Artifact> {
         let os_name = match std::env::consts::OS {
             "windows" => "windows",
             "linux" => "linux",
@@ -272,7 +288,9 @@ impl Launcher {
         }
     }
 
-    fn extract_lwjgl3_native_library(&self, jar_path: &Path, extract_dir: &Path) -> anyhow::Result<()> {
+    fn extract_lwjgl3_native_library(
+        &self, jar_path: &Path, extract_dir: &Path
+    ) -> anyhow::Result<()> {
         let file = std::fs::File::open(jar_path)
             .with_context(|| format!("Failed to open native JAR file: {:?}", jar_path))?;
         let mut archive = zip::ZipArchive::new(file)
@@ -337,6 +355,8 @@ impl Launcher {
         &self,
         custom_args: Option<String>,
         natives_dir: &PathBuf,
+        authlib_injector_jar: Option<&std::path::PathBuf>,
+        prefetched_metadata: Option<&String>,
     ) -> Vec<String> {
         let mut args = vec![
             "-Xmx2G".to_string(),
@@ -358,6 +378,15 @@ impl Launcher {
             "-XX:NmethodSweepActivity=1".to_string(),
             format!("-Djava.library.path={}", natives_dir.to_string_lossy()),
         ];
+
+        // Add authlib-injector arguments if provided
+        if let (Some(jar_path), Some(prefetched)) = (authlib_injector_jar, prefetched_metadata) {
+            // -javaagent:{jar_path}={api_url}
+            // -Dauthlibinjector.yggdrasil.prefetched={base64_metadata}
+            args.insert(6, format!("-javaagent:{}", jar_path.display()));
+            args.insert(7, format!("-Dauthlibinjector.yggdrasil.prefetched={}", prefetched));
+            println!("Using authlib-injector: {}", jar_path.display());
+        }
 
         if let Some(custom) = custom_args {
             args.extend(custom.split_whitespace().map(String::from));
@@ -406,7 +435,9 @@ impl Launcher {
         ]
     }
 
-    fn find_java_from_env(&self) -> anyhow::Result<PathBuf> {
+    fn find_java_from_env(
+        &self
+    ) -> anyhow::Result<PathBuf> {
         if let Ok(java_home) = std::env::var("JAVA_HOME") {
             let java_home_path = PathBuf::from(java_home);
             let java_bin = java_home_path.join("bin").join(if cfg!(target_os = "windows") {

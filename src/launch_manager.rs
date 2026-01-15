@@ -2,6 +2,7 @@ use crate::auth::Authenticator;
 use crate::install::Installer;
 use crate::launch::Launcher;
 use crate::models::AuthCache;
+use crate::yggdrasil::{AuthlibInjector, YggdrasilAccount, YggdrasilAuthenticator};
 use std::fs;
 use std::path::PathBuf;
 
@@ -84,6 +85,95 @@ impl LauncherManager {
         Ok(Some(cache))
     }
 
+    pub fn get_accounts_path(&self) -> PathBuf {
+        self.config_dir.join("accounts.json")
+    }
+
+    pub fn get_authlib_injector(&self) -> AuthlibInjector {
+        AuthlibInjector::new(self.config_dir.join("cache"))
+    }
+
+    pub fn save_accounts(&self, accounts: &[YggdrasilAccount]) -> anyhow::Result<()> {
+        let accounts_path = self.get_accounts_path();
+        let json = serde_json::to_string_pretty(accounts)?;
+        fs::write(&accounts_path, json)?;
+        println!("Accounts saved to {:?}", accounts_path);
+        Ok(())
+    }
+
+    pub fn load_accounts(&self) -> anyhow::Result<Vec<YggdrasilAccount>> {
+        let accounts_path = self.get_accounts_path();
+        if !accounts_path.exists() {
+            return Ok(Vec::new());
+        }
+        let json = fs::read_to_string(&accounts_path)?;
+        let accounts: Vec<YggdrasilAccount> = serde_json::from_str(&json)?;
+        Ok(accounts)
+    }
+
+    pub fn find_account_by_identifier(&self, identifier: &str, api_url: &str) -> anyhow::Result<Option<YggdrasilAccount>> {
+        let accounts = self.load_accounts()?;
+        let normalized_url = api_url.trim_end_matches('/');
+        for account in accounts {
+            if account.identifier == identifier && account.api_url.trim_end_matches('/') == normalized_url {
+                return Ok(Some(account));
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn external_login(
+        &self,
+        identifier: &str,
+        password: &str,
+        api_url: &str,
+    ) -> anyhow::Result<YggdrasilAccount> {
+        // Resolve API URL via ALI
+        let resolved_url = YggdrasilAuthenticator::resolve_api_url(api_url).await?;
+        println!("Resolved API URL: {}", resolved_url);
+
+        let authenticator = YggdrasilAuthenticator::new(resolved_url.clone());
+
+        // Get server metadata
+        let metadata = authenticator.get_api_metadata().await?;
+        let server_name = metadata.meta.as_ref()
+            .and_then(|m| m.server_name.clone());
+
+        println!("Connected to: {}", server_name.as_deref().unwrap_or(&resolved_url));
+
+        // Authenticate
+        let auth_response = authenticator.authenticate(identifier, password).await?;
+
+        // Create account from response
+        let account = YggdrasilAccount::from_auth_response(
+            resolved_url,
+            server_name,
+            identifier.to_string(),
+            auth_response,
+        )?;
+
+        println!("Logged in as: {}", account.get_display_name());
+
+        // Save/update accounts
+        self.save_account(&account)?;
+
+        Ok(account)
+    }
+
+    pub fn save_account(&self, account: &YggdrasilAccount) -> anyhow::Result<()> {
+        let mut accounts = self.load_accounts()?;
+        let normalized_url = account.api_url.trim_end_matches('/');
+
+        // Remove existing account with same identifier and API URL
+        accounts.retain(|a| {
+            !(a.identifier == account.identifier && a.api_url.trim_end_matches('/') == normalized_url)
+        });
+
+        accounts.push(account.clone());
+        self.save_accounts(&accounts)?;
+        Ok(())
+    }
+
     pub async fn list_versions(&self) -> anyhow::Result<()> {
         self.installer.list_versions().await
     }
@@ -105,6 +195,8 @@ impl LauncherManager {
         user_type: String,
         jvm_args: Option<String>,
         java_path: Option<String>,
+        authlib_injector_jar: Option<std::path::PathBuf>,
+        prefetched_metadata: Option<String>,
     ) -> anyhow::Result<()> {
         self.launcher.launch_game(
             version_id,
@@ -114,6 +206,8 @@ impl LauncherManager {
             user_type,
             jvm_args,
             java_path,
+            authlib_injector_jar,
+            prefetched_metadata,
         )
     }
 }
