@@ -1,7 +1,7 @@
-use crate::models::VersionDetails;
+use crate::models::{Classifiers, Library, VersionDetails};
 use anyhow::Context;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug)]
@@ -45,8 +45,13 @@ impl Launcher {
         };
 
         println!("Using Java: {:?}", java_path);
-        let classpath = self.build_classpath(&version_dir, &version_details)?;
+
+        // Verify and extract native libraries if needed
         let version_natives_dir = version_dir.join("natives");
+        self.verify_and_extract_natives(&version_details, &version_natives_dir)?;
+
+        let classpath = self.build_classpath(
+            &version_dir, &version_details)?;
 
         let mut command_args = self.build_jvm_arguments(jvm_args, &version_natives_dir);
         command_args.push("-cp".to_string());
@@ -83,6 +88,215 @@ impl Launcher {
         Ok(())
     }
 
+    fn verify_and_extract_natives(
+        &self,
+        version_details: &VersionDetails,
+        natives_dir: &Path,
+    ) -> anyhow::Result<()> {
+        if !natives_dir.exists() {
+            fs::create_dir_all(natives_dir)?;
+        }
+
+        let mut needs_extraction = false;
+
+        for library in &version_details.libraries {
+            if !self.should_include_library(library) {
+                continue;
+            }
+
+            if let Some(downloads) = &library.downloads {
+                if let Some(classifiers) = &downloads.classifiers {
+                    if let Some(artifact) = self.get_native_artifact(classifiers) {
+                        let native_path = self.libraries_dir.join(&artifact.path);
+
+                        // Check if native library JAR exists and has been extracted
+                        if native_path.exists() {
+                            // Check if at least one native file exists
+                            let has_natives = self.check_natives_exist(natives_dir);
+                            if !has_natives {
+                                needs_extraction = true;
+                                break;
+                            }
+                        } else {
+                            println!("Warning: Native library not found: {:?}. Please run install first.", native_path);
+                        }
+                    }
+
+                    // Check other natives (natives-windows, natives-linux, etc.)
+                    for (classifier_name, artifact) in &classifiers.other {
+                        if classifier_name.contains("natives-") {
+                            let native_path = self.libraries_dir.join(&artifact.path);
+                            if native_path.exists() {
+                                let has_natives = self.check_natives_exist(natives_dir);
+                                if !has_natives {
+                                    needs_extraction = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if needs_extraction {
+            println!("Extracting native libraries...");
+            for library in &version_details.libraries {
+                if !self.should_include_library(library) {
+                    continue;
+                }
+
+                if let Some(downloads) = &library.downloads {
+                    if let Some(classifiers) = &downloads.classifiers {
+                        if let Some(artifact) = self.get_native_artifact(classifiers) {
+                            let native_path = self.libraries_dir.join(&artifact.path);
+                            if native_path.exists() {
+                                self.extract_lwjgl3_native_library(&native_path, natives_dir)?;
+                            }
+                        }
+
+                        for (classifier_name, artifact) in &classifiers.other {
+                            if classifier_name.contains("natives-") {
+                                let native_path = self.libraries_dir.join(&artifact.path);
+                                if native_path.exists() {
+                                    self.extract_lwjgl3_native_library(&native_path, natives_dir)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_natives_exist(&self, natives_dir: &Path) -> bool {
+        if !natives_dir.exists() {
+            return false;
+        }
+
+        // Check for at least one native library file
+        let entries = match fs::read_dir(natives_dir) {
+            Ok(e) => e,
+            Err(_) => return false,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path.extension();
+            if let Some(e) = ext {
+                match e.to_str() {
+                    Some("dll") | Some("so") | Some("dylib") => return true,
+                    _ => continue,
+                }
+            }
+        }
+
+        false
+    }
+
+    fn should_include_library(&self, library: &Library) -> bool {
+        if let Some(rules) = &library.rules {
+            let mut allowed = false;
+            for rule in rules {
+                let matches = match &rule.os {
+                    Some(os_rule) => {
+                        match std::env::consts::OS {
+                            "windows" => os_rule.name == "windows",
+                            "linux" => os_rule.name == "linux",
+                            "macos" => os_rule.name == "osx",
+                            _ => false,
+                        }
+                    }
+                    None => true,
+                };
+
+                if rule.action == "allow" {
+                    if matches {
+                        allowed = true;
+                    }
+                } else if rule.action == "disallow" {
+                    if matches {
+                        return false;
+                    }
+                }
+            }
+
+            // If there are rules but none allowed, check if default should be disallow
+            // Minecraft's rule system: if action is "allow", it applies when matches
+            // If action is "disallow", it applies when matches
+            // If no rules match, the default behavior depends on the last rule
+            return allowed;
+        }
+        true
+    }
+
+    fn get_native_artifact<'a>(&self, classifiers: &'a Classifiers) -> Option<&'a crate::models::Artifact> {
+        let os_name = match std::env::consts::OS {
+            "windows" => "windows",
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => return None,
+        };
+        let arch_name = match std::env::consts::ARCH {
+            "aarch64" => "aarch64",
+            "x86_64" => "x64",
+            _ => std::env::consts::ARCH,
+        };
+
+        let specific_key = format!("natives-{}-{}", os_name, arch_name);
+        if let Some(artifact) = classifiers.other.get(&specific_key) {
+            return Some(artifact);
+        }
+
+        match std::env::consts::OS {
+            "windows" => classifiers
+                .natives_windows
+                .as_ref()
+                .or_else(|| classifiers.other.get("natives-windows")),
+            "linux" => classifiers
+                .natives_linux
+                .as_ref()
+                .or_else(|| classifiers.other.get("natives-linux")),
+            "macos" => classifiers
+                .natives_macos
+                .as_ref()
+                .or_else(|| classifiers.other.get("natives-macos")),
+            _ => None,
+        }
+    }
+
+    fn extract_lwjgl3_native_library(&self, jar_path: &Path, extract_dir: &Path) -> anyhow::Result<()> {
+        let file = std::fs::File::open(jar_path)
+            .with_context(|| format!("Failed to open native JAR file: {:?}", jar_path))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .with_context(|| format!("Failed to read ZIP archive: {:?}", jar_path))?;
+
+        for i in 0..archive.len() {
+            let mut file = archive
+                .by_index(i)
+                .with_context(|| format!("Failed to get file entry {} from archive: {:?}", i, jar_path))?;
+            let outpath = extract_dir.join(file.mangled_name());
+            let file_name = file.name().to_lowercase();
+
+            if file_name.ends_with(".dll") || file_name.ends_with(".so") || file_name.ends_with(".dylib") {
+                if let Some(p) = outpath.parent() {
+                    if !p.exists() {
+                        fs::create_dir_all(p).with_context(|| {
+                            format!("Failed to create directory for native file: {:?}", p)
+                        })?;
+                    }
+                }
+                let mut outfile = std::fs::File::create(&outpath)
+                    .with_context(|| format!("Failed to create output file for native: {:?}", outpath))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .with_context(|| format!("Failed to write native file: {:?}", outpath))?;
+            }
+        }
+        Ok(())
+    }
+
     fn build_classpath(
         &self,
         version_dir: &PathBuf,
@@ -91,18 +305,10 @@ impl Launcher {
         let mut classpath = Vec::new();
         classpath.push(version_dir.join(format!("{}.jar", version_details.id)));
 
-        let is_version_1_16_5 = version_details.id == "1.16.5";
-        if is_version_1_16_5 {
-            println!("Detected version 1.16.5. Filtering out LWJGL 3.2.1 libraries.");
-        }
-
         for library in &version_details.libraries {
-            if is_version_1_16_5 && library.name.starts_with("org.lwjgl:") {
-                let parts: Vec<&str> = library.name.split(':').collect();
-                if parts.len() == 3 && parts[2] == "3.2.1" {
-                    println!("  Skipping LWJGL 3.2.1 library: {}", library.name);
-                    continue;
-                }
+            // Check if library should be included based on rules
+            if !self.should_include_library(library) {
+                continue;
             }
 
             if let Some(downloads) = &library.downloads {
