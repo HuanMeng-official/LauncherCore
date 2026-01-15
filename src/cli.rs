@@ -63,6 +63,10 @@ pub enum Commands {
         /// Yggdrasil API URL (for external auth)
         #[arg(long = "api-url")]
         api_url: Option<String>,
+
+        /// Path to authlib-injector.jar (for external auth, skips auto-download)
+        #[arg(long = "authlib-jar")]
+        authlib_jar: Option<String>,
     },
 
     /// Login to Microsoft account

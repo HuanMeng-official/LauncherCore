@@ -12,7 +12,7 @@ use clap::Parser;
 use cli::{AuthType, Cli, Commands};
 use error::LauncherError;
 use launch_manager::LauncherManager;
-use yggdrasil::YggdrasilAuthenticator;
+use yggdrasil::{YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
             jvm_args,
             auth_type,
             api_url,
+            authlib_jar,
         } => match auth_type {
             AuthType::Offline => {
                 let launch_username = username.clone().unwrap_or_else(|| "Player".to_string());
@@ -62,6 +63,7 @@ async fn main() -> Result<()> {
                     global_java_path,
                     None,
                     None,
+                    None,
                 )?;
             }
             AuthType::Msa => {
@@ -75,6 +77,7 @@ async fn main() -> Result<()> {
                             "msa".to_string(),
                             jvm_args.clone(),
                             global_java_path,
+                            None,
                             None,
                             None,
                         )?;
@@ -94,33 +97,65 @@ async fn main() -> Result<()> {
 
                 // Try to find existing account
                 if let Some(account) = manager.find_account_by_identifier(&username, api_url)? {
-                    // Validate the token
                     let authenticator = YggdrasilAuthenticator::new(account.api_url.clone());
-                    if authenticator.validate(&account.access_token, Some(&account.client_token)).await {
-                        println!("Using cached credentials for {}", account.get_display_name());
 
-                        // Download authlib-injector if needed
-                        let authlib_injector = manager.get_authlib_injector();
-                        let jar_path = authlib_injector.get_or_download().await?;
+                    // Validate the token, if expired try to refresh
+                    let account_to_use = if !authenticator.validate(&account.access_token, Some(&account.client_token)).await {
+                        println!("Token expired, refreshing...");
 
-                        // Pre-fetch metadata
-                        let prefetched = authenticator.pre_fetch_metadata().await?;
+                        // Need to create a profile for refresh (remove dashes from UUID for the API)
+                        let profile_for_refresh = YggdrasilProfile {
+                            id: account.uuid.replace('-', ""),
+                            name: account.name.clone(),
+                            properties: None,
+                        };
 
-                        manager.launch(
-                            &version,
-                            account.name.clone(),
-                            account.access_token.clone(),
-                            account.uuid.clone(),
-                            "mojang".to_string(),
-                            jvm_args.clone(),
-                            global_java_path,
-                            Some(jar_path),
-                            Some(prefetched),
-                        )?;
+                        match authenticator.refresh(&account.access_token, Some(&account.client_token), Some(profile_for_refresh)).await {
+                            Ok(response) => {
+                                let updated_account = YggdrasilAccount {
+                                    access_token: response.access_token.clone(),
+                                    client_token: response.client_token,
+                                    ..account.clone()
+                                };
+                                manager.save_account(&updated_account)?;
+                                println!("Token refreshed for {}", updated_account.get_display_name());
+                                updated_account
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to refresh token: {}", e);
+                                eprintln!("Please login again using external-login command.");
+                                std::process::exit(1);
+                            }
+                        }
                     } else {
-                        eprintln!("Cached credentials expired. Please login again using external-login command.");
-                        std::process::exit(1);
-                    }
+                        println!("Using cached credentials for {}", account.get_display_name());
+                        account.clone()
+                    };
+
+                    // Get authlib-injector jar path - either from provided path or auto-download
+                    let jar_path = if let Some(custom_jar_path) = authlib_jar {
+                        println!("Using custom authlib-injector: {}", custom_jar_path);
+                        std::path::PathBuf::from(custom_jar_path)
+                    } else {
+                        let authlib_injector = manager.get_authlib_injector();
+                        authlib_injector.get_or_download().await?
+                    };
+
+                    // Pre-fetch metadata
+                    let prefetched = authenticator.pre_fetch_metadata().await?;
+
+                    manager.launch(
+                        &version,
+                        account_to_use.name.clone(),
+                        account_to_use.access_token.clone(),
+                        account_to_use.uuid.clone(),
+                        "mojang".to_string(),
+                        jvm_args.clone(),
+                        global_java_path,
+                        Some(jar_path),
+                        Some(prefetched),
+                        Some(account_to_use.api_url.clone()),
+                    )?;
                 } else {
                     eprintln!("No cached credentials found for {} on {}. Please login first using external-login command.",
                         username, api_url);

@@ -3,11 +3,16 @@ use anyhow::Context;
 use base64::Engine as _;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::{stdout, Write};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-const AUTHLIB_INJECTOR_URL: &str = "https://authlib-injector.yushi.me/artifact/latest/authlib-injector.jar";
+// Re-export YggdrasilProfile for use in main.rs
+pub use crate::models::YggdrasilProfile;
+
+const AUTHLIB_INJECTOR_API_BASE: &str = "https://authlib-injector.yushi.moe";
+const AUTHLIB_INJECTOR_API_MIRROR: &str = "https://bmclapi2.bangbang93.com/mirrors/authlib-injector";
 
 /// Returns the formatted UUID with dashes
 fn format_uuid(uuid: &str) -> String {
@@ -171,7 +176,6 @@ impl YggdrasilAuthenticator {
         }
     }
 
-    #[allow(dead_code)]
     pub async fn refresh(
         &self,
         access_token: &str,
@@ -321,11 +325,40 @@ impl AuthlibInjector {
             return Ok(jar_path);
         }
 
-        println!("Downloading authlib-injector.jar...");
+        println!("Fetching authlib-injector download URL...");
+
+        // Try to get latest version info from API
         let client = Client::new();
+        let api_url = format!("{}/artifact/latest.json", AUTHLIB_INJECTOR_API_BASE);
+
+        let download_url = match client.get(&api_url).send().await {
+            Ok(response) if response.status().is_success() => {
+                let json: serde_json::Value = response.json().await?;
+                match json["download_url"].as_str() {
+                    Some(url) => url.to_string(),
+                    None => {
+                        // Fallback to mirror
+                        println!("Using BMCLAPI mirror...");
+                        format!("{}/artifact/latest/authlib-injector.jar", AUTHLIB_INJECTOR_API_MIRROR)
+                    }
+                }
+            }
+            _ => {
+                println!("Using BMCLAPI mirror...");
+                format!("{}/artifact/latest/authlib-injector.jar", AUTHLIB_INJECTOR_API_MIRROR)
+            }
+        };
+
+        println!("Downloading authlib-injector from: {}", download_url);
+
+        // Create cache directory if it doesn't exist
+        if let Some(parent) = jar_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+        }
 
         let response = client
-            .get(AUTHLIB_INJECTOR_URL)
+            .get(&download_url)
             .send()
             .await
             .context("Failed to connect to authlib-injector download server")?;

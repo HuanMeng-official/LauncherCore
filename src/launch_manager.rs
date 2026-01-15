@@ -197,6 +197,7 @@ impl LauncherManager {
         java_path: Option<String>,
         authlib_injector_jar: Option<std::path::PathBuf>,
         prefetched_metadata: Option<String>,
+        api_url: Option<String>,
     ) -> anyhow::Result<()> {
         self.launcher.launch_game(
             version_id,
@@ -208,6 +209,7 @@ impl LauncherManager {
             java_path,
             authlib_injector_jar,
             prefetched_metadata,
+            api_url,
         )
     }
 }

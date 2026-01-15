@@ -27,6 +27,7 @@ impl Launcher {
         java_path_override: Option<String>,
         authlib_injector_jar: Option<std::path::PathBuf>,
         prefetched_metadata: Option<String>,
+        api_url: Option<String>,
     ) -> anyhow::Result<()> {
         println!(
             "Launching Minecraft version: {} for user: {}",
@@ -63,7 +64,8 @@ impl Launcher {
             jvm_args,
             &version_natives_dir,
             authlib_injector_jar.as_ref(),
-            prefetched_metadata.as_ref()
+            prefetched_metadata.as_ref(),
+            api_url.as_deref()
         );
         command_args.push("-cp".to_string());
         command_args.push(classpath);
@@ -357,6 +359,7 @@ impl Launcher {
         natives_dir: &PathBuf,
         authlib_injector_jar: Option<&std::path::PathBuf>,
         prefetched_metadata: Option<&String>,
+        api_url: Option<&str>,
     ) -> Vec<String> {
         let mut args = vec![
             "-Xmx2G".to_string(),
@@ -383,9 +386,10 @@ impl Launcher {
         if let (Some(jar_path), Some(prefetched)) = (authlib_injector_jar, prefetched_metadata) {
             // -javaagent:{jar_path}={api_url}
             // -Dauthlibinjector.yggdrasil.prefetched={base64_metadata}
-            args.insert(6, format!("-javaagent:{}", jar_path.display()));
+            let api = api_url.unwrap_or("");
+            args.insert(6, format!("-javaagent:{}={}", jar_path.display(), api));
             args.insert(7, format!("-Dauthlibinjector.yggdrasil.prefetched={}", prefetched));
-            println!("Using authlib-injector: {}", jar_path.display());
+            println!("Using authlib-injector: {} with API: {}", jar_path.display(), api);
         }
 
         if let Some(custom) = custom_args {
