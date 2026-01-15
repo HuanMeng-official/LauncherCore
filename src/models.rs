@@ -283,14 +283,14 @@ pub struct YggdrasilAuthenticateResponse {
     pub user: Option<YggdrasilUser>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct YggdrasilProfile {
     pub id: String,
     pub name: String,
     pub properties: Option<Vec<YggdrasilProperty>>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct YggdrasilProperty {
     pub name: String,
     pub value: String,

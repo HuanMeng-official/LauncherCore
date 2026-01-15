@@ -3,7 +3,7 @@ use anyhow::Context;
 use base64::Engine as _;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -22,6 +22,32 @@ fn format_uuid(uuid: &str) -> String {
         )
     } else {
         uuid.to_string()
+    }
+}
+
+/// Interactive profile selector using arrow keys
+pub fn select_profile(profiles: &[YggdrasilProfile]) -> anyhow::Result<YggdrasilProfile> {
+    use std::io::{self, Write};
+
+    loop {
+        println!("Please select a profile:");
+        for (i, profile) in profiles.iter().enumerate() {
+            println!("  {}. {}", i + 1, profile.name);
+        }
+        print!("Enter the number (1-{}): ", profiles.len());
+        stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        match input.trim().parse::<usize>() {
+            Ok(num) if num >= 1 && num <= profiles.len() => {
+                return Ok(profiles[num - 1].clone());
+            }
+            _ => {
+                println!("Invalid input. Please try again.\n");
+            }
+        }
     }
 }
 
@@ -219,15 +245,24 @@ pub struct YggdrasilAccount {
 }
 
 impl YggdrasilAccount {
-    pub fn from_auth_response(
+    pub fn from_auth_response_with_profile_selection(
         api_url: String,
         server_name: Option<String>,
         identifier: String,
         response: YggdrasilAuthenticateResponse,
     ) -> anyhow::Result<Self> {
-        let selected_profile = response.selected_profile.as_ref().context(
-            "No profile selected. The user has multiple profiles and needs to select one.",
-        )?;
+        let selected_profile = if let Some(profile) = response.selected_profile {
+            profile
+        } else {
+            // User has multiple profiles, need to select one
+            if response.available_profiles.is_empty() {
+                return Err(anyhow::anyhow!("No profiles available for this account"));
+            }
+
+            // Use interactive selection
+            let profile = select_profile(&response.available_profiles)?;
+            profile
+        };
 
         let user_id = response.user.as_ref().context("User info not available")?.id.clone();
         let user_properties_json = serde_json::to_string(
@@ -245,6 +280,20 @@ impl YggdrasilAccount {
             user_id: format_uuid(&user_id),
             user_properties: user_properties_json,
         })
+    }
+
+    pub fn from_auth_response(
+        api_url: String,
+        server_name: Option<String>,
+        identifier: String,
+        response: YggdrasilAuthenticateResponse,
+    ) -> anyhow::Result<Self> {
+        Self::from_auth_response_with_profile_selection(
+            api_url,
+            server_name,
+            identifier,
+            response,
+        )
     }
 
     pub fn get_display_name(&self) -> String {
