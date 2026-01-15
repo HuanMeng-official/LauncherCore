@@ -62,7 +62,7 @@ mclc <COMMAND> [OPTIONS]
 | `-u, --username <NAME>` | Game username (required for offline mode) |
 | `--access-token <TOKEN>` | Microsoft access token (for MSA authentication) |
 | `-j, --jvm-args <ARGS>` | Custom JVM arguments (e.g., `-Xmx4G -XX:+UseG1GC`) |
-| `--auth-type <TYPE>` | Authentication type: `offline` (default) or `msa` |
+| `--auth <TYPE>` | Authentication type: `offline` (default) or `msa` |
 | `-r, --runtime <PATH>` | Specify Java runtime path |
 
 ## Examples
@@ -86,13 +86,13 @@ mclc launch 1.21.3 --username PlayerName --runtime "C:\Program Files\Java\jdk-21
 mclc login
 # Follow the device code authentication flow
 mclc install 1.21.3
-mclc launch 1.21.3 --auth-type msa
+mclc launch 1.21.3 --auth msa
 ```
 
 Or using a cached access token:
 
 ```bash
-mclc launch 1.21.3 --auth-type msa --access_token <your_token>
+mclc launch 1.21.3 --auth msa --access_token <your_token>
 ```
 
 ### List Available Versions

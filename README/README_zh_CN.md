@@ -62,7 +62,7 @@ mclc <命令> [选项]
 | `-u, --username <名称>` | 游戏用户名（离线模式必需） |
 | `--access-token <令牌>` | 微软访问令牌（用于 MSA 认证） |
 | `-j, --jvm-args <参数>` | 自定义 JVM 参数（如 `-Xmx4G -XX:+UseG1GC`） |
-| `--auth-type <类型>` | 认证类型：`offline`（默认）或 `msa` |
+| `--auth <类型>` | 认证类型：`offline`（默认）或 `msa` |
 | `-r, --runtime <路径>` | 指定 Java 运行时路径 |
 
 ## 使用示例
@@ -86,13 +86,13 @@ mclc launch 1.21.3 --username 玩家名 --runtime "C:\Program Files\Java\jdk-21\
 mclc login
 # 按照设备码认证流程完成登录
 mclc install 1.21.3
-mclc launch 1.21.3 --auth-type msa
+mclc launch 1.21.3 --auth msa
 ```
 
 或使用缓存的访问令牌：
 
 ```bash
-mclc launch 1.21.3 --auth-type msa --access-token <你的令牌>
+mclc launch 1.21.3 --auth msa --access-token <你的令牌>
 ```
 
 ### 列出可用版本

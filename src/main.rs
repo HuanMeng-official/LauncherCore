@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
             match manager.login().await {
                 Ok(auth_cache) => {
                     manager.save_auth_cache(&auth_cache)?;
-                    println!("Login successful! You can now launch with '--auth-type msa'.");
+                    println!("Login successful! You can now launch with '--auth msa'.");
                 }
                 Err(e) => {
                     eprintln!("Authentication failed: {}", e);
