@@ -414,7 +414,7 @@ impl AuthlibInjector {
         let latest = match self.fetch_latest(&client, api_base).await {
             Ok(latest) => latest,
             Err(error) => {
-                println!(
+                crate::outwarn!(
                     "Failed to query authlib-injector API ({}), trying BMCLAPI mirror...",
                     error
                 );
@@ -435,7 +435,7 @@ impl AuthlibInjector {
                     return Ok(jar_path);
                 }
                 Some(_) => {
-                    println!(
+                    crate::outwarn!(
                         "Cached authlib-injector.jar failed checksum verification, re-downloading..."
                     );
                 }
@@ -443,7 +443,8 @@ impl AuthlibInjector {
             }
         }
 
-        println!("Downloading authlib-injector from: {}", latest.download_url);
+        crate::outln!("Downloading authlib-injector from: {}", latest.download_url);
+        crate::output::progress("authlib", 0, 0, "Downloading authlib-injector");
         fs::create_dir_all(&self.cache_dir)
             .with_context(|| format!("Failed to create directory: {:?}", self.cache_dir))?;
 
@@ -469,11 +470,17 @@ impl AuthlibInjector {
             downloaded += chunk.len() as u64;
 
             if total_bytes > 0 && (downloaded % (1024 * 1024) == 0 || downloaded == total_bytes) {
-                println!(
+                crate::outln!(
                     "Downloaded: {}/{} bytes ({:.0}%)",
                     downloaded,
                     total_bytes,
                     downloaded as f64 / total_bytes as f64 * 100.0
+                );
+                crate::output::progress(
+                    "authlib",
+                    downloaded,
+                    total_bytes,
+                    "Downloading authlib-injector",
                 );
             }
         }
@@ -497,7 +504,8 @@ impl AuthlibInjector {
         temp.persist(&jar_path)
             .map_err(|error| anyhow::anyhow!("Failed to save authlib-injector.jar: {}", error))?;
 
-        println!("authlib-injector.jar downloaded successfully");
+        crate::outln!("authlib-injector.jar downloaded successfully");
+        crate::output::progress("authlib", 1, 1, "authlib-injector downloaded");
         Ok(jar_path)
     }
 }

@@ -44,15 +44,15 @@ pub fn select_java(
     override_path: Option<String>,
 ) -> anyhow::Result<PathBuf> {
     if let Some(path) = override_path {
-        println!("Using explicitly provided Java path: {}", path);
+        crate::outln!("Using explicitly provided Java path: {}", path);
         return Ok(PathBuf::from(path));
     }
 
     let runtimes = detect_java_runtimes();
     if let Some(runtime) = select_from(&runtimes, required_major) {
         match runtime.version {
-            Some(version) => println!("Using Java {}: {}", version, runtime.path.display()),
-            None => println!("Using Java: {}", runtime.path.display()),
+            Some(version) => crate::outln!("Using Java {}: {}", version, runtime.path.display()),
+            None => crate::outln!("Using Java: {}", runtime.path.display()),
         }
         return Ok(runtime.path.clone());
     }

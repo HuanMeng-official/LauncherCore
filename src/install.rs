@@ -71,21 +71,26 @@ pub struct Installer {
 }
 
 impl Installer {
-    pub async fn list_versions(&self) -> anyhow::Result<()> {
-        println!("Fetching available Minecraft versions...");
+    pub async fn fetch_versions(&self) -> anyhow::Result<Vec<VersionInfo>> {
         let client = Client::new();
         let manifest: VersionManifest =
             download::fetch_json(&client, VERSION_MANIFEST_URL, self.source).await?;
-        println!("Available versions:");
-        for version in &manifest.versions {
-            println!("  {} ({})", version.id, version.version_type);
+        Ok(manifest.versions)
+    }
+
+    pub async fn list_versions(&self) -> anyhow::Result<()> {
+        crate::outln!("Fetching available Minecraft versions...");
+        let versions = self.fetch_versions().await?;
+        crate::outln!("Available versions:");
+        for version in &versions {
+            crate::outln!("  {} ({})", version.id, version.version_type);
         }
         Ok(())
     }
 
     pub async fn install_version(&self, version_id: &str) -> anyhow::Result<()> {
-        println!("Installing Minecraft version: {}", version_id);
-        println!("Download source: {}", self.source.label());
+        crate::outln!("Installing Minecraft version: {}", version_id);
+        crate::outln!("Download source: {}", self.source.label());
 
         let client = Client::new();
         let (_version_info, version_details) =
@@ -167,7 +172,8 @@ impl Installer {
         }
 
         if !first_phase_tasks.is_empty() {
-            println!("Downloading metadata...");
+            crate::outln!("Downloading metadata...");
+            crate::output::progress("metadata", 0, 0, "Downloading metadata");
             let client = Arc::new(client);
             let source = self.source;
             let results = stream::iter(first_phase_tasks)
@@ -229,7 +235,7 @@ impl Installer {
         }
 
         if tasks.is_empty() && extraction_tasks.is_empty() {
-            println!("All files already downloaded for version {}!", version_id);
+            crate::outln!("All files already downloaded for version {}!", version_id);
             // Still need to extract natives if they exist
             for (jar_path, extract_dir) in &extraction_tasks {
                 if jar_path.exists() {
@@ -239,12 +245,22 @@ impl Installer {
             return Ok(());
         }
 
-        // Create progress bar
-        let pb = Arc::new(ProgressBar::new(tasks.len() as u64));
+        // Create progress bar (hidden in JSON mode; progress is emitted as events)
+        let pb = Arc::new(if crate::output::is_json() {
+            ProgressBar::hidden()
+        } else {
+            ProgressBar::new(tasks.len() as u64)
+        });
         pb.set_style(ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
             .unwrap()
             .progress_chars("#>-"));
+        crate::output::progress(
+            "downloads",
+            0,
+            tasks.len() as u64,
+            "Downloading files",
+        );
 
         // Download all files concurrently
         let client = Arc::new(client);
@@ -270,6 +286,12 @@ impl Installer {
                     if result.is_ok() {
                         let downloaded = counter.fetch_add(1, Ordering::SeqCst) + 1;
                         pb.set_position(downloaded);
+                        crate::output::progress(
+                            "downloads",
+                            downloaded,
+                            pb.length().unwrap_or(0),
+                            "Downloading files",
+                        );
                     }
                     (task, result)
                 })
@@ -285,12 +307,12 @@ impl Installer {
                 Ok((_, Ok(()))) => {}
                 Ok((task, Err(e))) => {
                     let message = format!("{} ({}): {}", task.task_type, task.url, e);
-                    pb.println(format!("Failed to download {}", message));
+                    crate::outwarn!("Failed to download {}", message);
                     failures.push(message);
                 }
                 Err(join_error) => {
                     let message = format!("download task failed: {}", join_error);
-                    pb.println(format!("Failed to download {}", message));
+                    crate::outwarn!("Failed to download {}", message);
                     failures.push(message);
                 }
             }
@@ -300,13 +322,28 @@ impl Installer {
         pb.finish_with_message(format!("Downloaded {} files", counter.load(Ordering::SeqCst)));
 
         // Extract native libraries
-        for (jar_path, extract_dir) in extraction_tasks {
+        let total_extract = extraction_tasks.len() as u64;
+        if total_extract > 0 {
+            crate::output::progress(
+                "extract",
+                0,
+                total_extract,
+                "Extracting native libraries",
+            );
+        }
+        for (index, (jar_path, extract_dir)) in extraction_tasks.into_iter().enumerate() {
             if jar_path.exists() {
                 self.extract_lwjgl3_native_library(&jar_path, &extract_dir)?;
             }
+            crate::output::progress(
+                "extract",
+                index as u64 + 1,
+                total_extract,
+                "Extracting native libraries",
+            );
         }
 
-        println!("Version {} installed successfully!", version_id);
+        crate::outln!("Version {} installed successfully!", version_id);
         Ok(())
     }
 

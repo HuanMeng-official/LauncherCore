@@ -42,7 +42,7 @@ impl Authenticator {
     pub async fn authenticate_with_msa(&self) -> anyhow::Result<MicrosoftTokenResponse> {
         let client = Client::new();
 
-        println!("Starting Microsoft Account login...");
+        crate::outln!("Starting Microsoft Account login...");
         let params = [
             ("client_id", self.client_id.as_str()),
             ("scope", "XboxLive.signin offline_access"),
@@ -56,7 +56,7 @@ impl Authenticator {
         }
 
         let device_code_res: DeviceCodeResponse = res.json().await?;
-        println!("{}", device_code_res.message);
+        crate::output::device_code(&device_code_res);
 
         let poll_params = [
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
@@ -79,7 +79,7 @@ impl Authenticator {
 
             if res.status().is_success() {
                 let token_res: MicrosoftTokenResponse = res.json().await?;
-                println!("Microsoft Account login successful!");
+                crate::outln!("Microsoft Account login successful!");
                 return Ok(token_res);
             } else {
                 let status = res.status();
@@ -89,11 +89,11 @@ impl Authenticator {
                         if let Some(error_code) = error_json.get("error").and_then(|e| e.as_str()) {
                             match error_code {
                                 "authorization_pending" => {
-                                    println!("Waiting for user to authorize...");
+                                    crate::outln!("Waiting for user to authorize...");
                                     continue;
                                 }
                                 "slow_down" => {
-                                    println!("Server requested to slow down polling.");
+                                    crate::outln!("Server requested to slow down polling.");
                                     continue;
                                 }
                                 "expired_token" => {
@@ -151,7 +151,7 @@ impl Authenticator {
             .uhs
             .clone();
 
-        println!("XBL token acquired.");
+        crate::outln!("XBL token acquired.");
         Ok((token, user_hash))
     }
 
@@ -199,7 +199,7 @@ impl Authenticator {
             .uhs
             .clone();
 
-        println!("XSTS token acquired.");
+        crate::outln!("XSTS token acquired.");
         Ok((token, user_hash))
     }
 
@@ -226,7 +226,7 @@ impl Authenticator {
         }
 
         let mc_login_res: MinecraftLoginResponse = res.json().await?;
-        println!(
+        crate::outln!(
             "Logged into Minecraft services as '{}'.",
             mc_login_res.username
         );
@@ -256,7 +256,7 @@ impl Authenticator {
         }
 
         let profile: MinecraftProfile = res.json().await?;
-        println!("Retrieved Minecraft profile: {} ({})", profile.name, profile.id);
+        crate::outln!("Retrieved Minecraft profile: {} ({})", profile.name, profile.id);
         Ok(profile)
     }
 

@@ -46,6 +46,10 @@ pub enum Commands {
     #[command(long_about = "Scan JAVA_HOME, PATH, and common installation directories, then list the detected Java runtimes with their versions and architectures.")]
     Java,
 
+    /// Run the persistent JSON communication server
+    #[command(long_about = "Run a persistent NDJSON server for GUI integration. The launcher reads one JSON request per line from stdin and writes one JSON event per line to stdout. Commands: ping, shutdown, java.list, versions.list, install, launch, login, external_login, accounts.list. Events: ready, log, progress, device_code, profiles, result, error. Each request has a client-chosen \"id\"; results and errors echo it back so concurrent work can be correlated. Requests are processed sequentially.")]
+    Json,
+
     /// Install a Minecraft version
     #[command(long_about = "Install a Minecraft version and optionally Fabric, Quilt, Forge, or NeoForge. The vanilla parent version is installed first. Downloads are verified and can use the official source or the BMCLAPI mirror.")]
     Install {
@@ -116,6 +120,12 @@ pub enum Commands {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn json_command_parses() {
+        let cli = Cli::try_parse_from(["mclc", "json"]).unwrap();
+        assert!(matches!(cli.command, Commands::Json));
+    }
 
     #[test]
     fn external_login_password_is_optional() {

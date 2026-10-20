@@ -15,9 +15,7 @@ pub struct AuthCache {
 #[derive(Debug, Deserialize)]
 pub struct DeviceCodeResponse {
     pub device_code: String,
-    #[allow(dead_code)]
     pub user_code: String,
-    #[allow(dead_code)]
     pub verification_uri: String,
     pub expires_in: u64,
     pub interval: u64,

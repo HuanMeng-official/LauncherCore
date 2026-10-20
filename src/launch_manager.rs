@@ -123,7 +123,7 @@ impl LauncherManager {
         fs::create_dir_all(&self.config_dir)?;
         set_private_dir_permissions(&self.config_dir)?;
         write_private_file(&cache_path, &json)?;
-        println!("Authentication information saved to {:?}", cache_path);
+        crate::outln!("Authentication information saved to {:?}", cache_path);
         Ok(())
     }
 
@@ -154,7 +154,7 @@ impl LauncherManager {
         fs::create_dir_all(&self.config_dir)?;
         set_private_dir_permissions(&self.config_dir)?;
         write_private_file(&accounts_path, &json)?;
-        println!("Accounts saved to {:?}", accounts_path);
+        crate::outln!("Accounts saved to {:?}", accounts_path);
         Ok(())
     }
 
@@ -216,7 +216,7 @@ impl LauncherManager {
     {
         // Resolve API URL via ALI
         let resolved_url = YggdrasilAuthenticator::resolve_api_url(api_url).await?;
-        println!("Resolved API URL: {}", resolved_url);
+        crate::outln!("Resolved API URL: {}", resolved_url);
 
         let authenticator = YggdrasilAuthenticator::new(resolved_url.clone());
 
@@ -225,7 +225,7 @@ impl LauncherManager {
         let server_name = metadata.meta.as_ref()
             .and_then(|m| m.server_name.clone());
 
-        println!("Connected to: {}", server_name.as_deref().unwrap_or(&resolved_url));
+        crate::outln!("Connected to: {}", server_name.as_deref().unwrap_or(&resolved_url));
 
         // Authenticate
         let mut auth_response = authenticator.authenticate(identifier, password).await?;
@@ -238,7 +238,7 @@ impl LauncherManager {
             }
 
             let profile = select_profile(&auth_response.available_profiles)?;
-            println!("Binding profile: {}", profile.name);
+            crate::outln!("Binding profile: {}", profile.name);
 
             let mut refreshed = authenticator
                 .refresh(
@@ -262,7 +262,7 @@ impl LauncherManager {
             auth_response,
         )?;
 
-        println!("Logged in as: {}", account.get_display_name());
+        crate::outln!("Logged in as: {}", account.get_display_name());
 
         // Save/update accounts
         self.save_account(&account)?;
@@ -327,7 +327,7 @@ impl LauncherManager {
             );
         };
 
-        println!("Refreshing Microsoft authentication...");
+        crate::outln!("Refreshing Microsoft authentication...");
         let refreshed = self
             .authenticator
             .refresh_authentication(&refresh_token)

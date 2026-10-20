@@ -220,7 +220,7 @@ fn build_jvm_arguments(
         let api = api_url.unwrap_or("");
         args.push(format!("-javaagent:{}={}", jar_path.display(), api));
         args.push(format!("-Dauthlibinjector.yggdrasil.prefetched={}", prefetched));
-        println!(
+        crate::outln!(
             "Using authlib-injector: {} with API: {}",
             jar_path.display(),
             api
@@ -332,9 +332,10 @@ impl Launcher {
         prefetched_metadata: Option<String>,
         api_url: Option<String>,
     ) -> anyhow::Result<()> {
-        println!(
+        crate::outln!(
             "Launching Minecraft version: {} for user: {}",
-            version_id, username
+            version_id,
+            username
         );
 
         let version_dir = self.versions_dir.join(version_id);
@@ -351,7 +352,7 @@ impl Launcher {
             .map(|java| java.major_version);
         let java_path = select_java(required_java, java_path_override)?;
 
-        println!("Using Java: {:?}", java_path);
+        crate::outln!("Using Java: {:?}", java_path);
 
         // Verify and extract native libraries if needed
         let version_natives_dir = version_dir.join("natives");
@@ -401,7 +402,7 @@ impl Launcher {
         command_args.push(version_details.main_class.clone());
         command_args.extend(build_game_arguments(&version_details, &ctx));
 
-        println!(
+        crate::outln!(
             "Launching with command: {} {:?}",
             java_path.display(),
             redact_sensitive_arguments(&command_args)
@@ -414,6 +415,14 @@ impl Launcher {
         // options) must resolve inside the game directory.
         cmd.current_dir(&self.minecraft_dir);
 
+        // In JSON mode the game must not share the protocol's stdio pipes.
+        // A detached game that inherited stdin could also consume requests.
+        if crate::output::is_json() {
+            cmd.stdin(std::process::Stdio::null());
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+        }
+
         #[cfg(target_os = "windows")]
         {
             cmd.creation_flags(0x00000008); // DETACHED_PROCESS
@@ -421,8 +430,8 @@ impl Launcher {
 
         let _ = cmd.spawn().context("Failed to start Minecraft")?;
 
-        println!("Minecraft launched successfully");
-        println!("Please wait patiently for the game window to appear");
+        crate::outln!("Minecraft launched successfully");
+        crate::outln!("Please wait patiently for the game window to appear");
         Ok(())
     }
 
@@ -453,7 +462,7 @@ impl Launcher {
                     break;
                 }
             } else {
-                println!(
+                crate::outwarn!(
                     "Warning: Native library not found: {:?}. Please run install first.",
                     native_path
                 );
@@ -461,7 +470,7 @@ impl Launcher {
         }
 
         if needs_extraction {
-            println!("Extracting native libraries...");
+            crate::outln!("Extracting native libraries...");
             for artifact in &natives {
                 let native_path = self.libraries_dir.join(&artifact.path);
                 if native_path.exists() {

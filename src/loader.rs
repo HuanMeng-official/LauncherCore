@@ -95,10 +95,16 @@ pub async fn install_loader(
     loader_version: Option<&str>,
     java_path_override: Option<String>,
 ) -> anyhow::Result<String> {
-    println!(
+    crate::outln!(
         "Installing {} for Minecraft {}...",
         kind.label(),
         game_version
+    );
+    crate::output::progress(
+        "loader",
+        0,
+        0,
+        format!("Installing {} for Minecraft {}", kind.label(), game_version),
     );
     installer.install_version(game_version).await?;
 
@@ -117,13 +123,14 @@ pub async fn install_loader(
         }
     };
 
-    println!(
+    crate::outln!(
         "Installed {} for Minecraft {} as version '{}'.",
         kind.label(),
         game_version,
         version_id
     );
-    println!("Launch with: mclc launch {}", version_id);
+    crate::outln!("Launch with: mclc launch {}", version_id);
+    crate::output::progress("loader", 1, 1, format!("Installed {}", version_id));
     Ok(version_id)
 }
 
@@ -378,7 +385,7 @@ async fn install_neoforge(
         (version, url)
     };
 
-    println!("Using NeoForge {}", neoforge_version);
+    crate::outln!("Using NeoForge {}", neoforge_version);
     run_installer(
         installer,
         &client,
@@ -511,14 +518,30 @@ async fn run_installer(
 
     ensure_launcher_profiles(&installer.game_dir, game_version)?;
 
-    println!("Running the {} installer...", version_id);
-    let status = installer_command(&java, &installer_path, &installer.game_dir)
-        .status()
-        .with_context(|| format!("Failed to run the installer with Java {}", java.display()))?;
+    crate::outln!("Running the {} installer...", version_id);
+    crate::output::progress("loader_install", 0, 1, "Running loader installer");
 
-    if !status.success() {
-        anyhow::bail!("Loader installer exited with {}", status);
+    if crate::output::is_json() {
+        let output = installer_command(&java, &installer_path, &installer.game_dir)
+            .output()
+            .with_context(|| format!("Failed to run the installer with Java {}", java.display()))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let lines: Vec<&str> = stderr.lines().collect();
+            for line in lines.iter().rev().take(20).rev() {
+                crate::outwarn!("{}", line);
+            }
+            anyhow::bail!("Loader installer exited with {}", output.status);
+        }
+    } else {
+        let status = installer_command(&java, &installer_path, &installer.game_dir)
+            .status()
+            .with_context(|| format!("Failed to run the installer with Java {}", java.display()))?;
+        if !status.success() {
+            anyhow::bail!("Loader installer exited with {}", status);
+        }
     }
+    crate::output::progress("loader_install", 1, 1, "Loader installer finished");
 
     let version_json = installer
         .versions_dir

@@ -25,6 +25,7 @@
 - **Multi-Account Support**: Stores multiple external accounts and refreshes expired tokens
 - **Credential Protection**: Access tokens are redacted from launch logs; on Unix, credential files are written with `0600` permissions
 - **Custom JVM Arguments**: Pass custom JVM arguments for performance tuning
+- **JSON Communication Mode**: A persistent NDJSON server exposes install, launch, login, and account operations for GUI frontends
 - **Cross-Platform**: Supports Windows, Linux, and macOS, including Linux ARM64 native handling
 - **Detailed Error Handling**: Comprehensive error messages at every step using anyhow/thiserror
 
@@ -60,6 +61,7 @@ mclc <COMMAND> [OPTIONS]
 | **launch <VERSION>** | Launch an installed Minecraft version |
 | **login** | Login to a Microsoft account |
 | **external-login <IDENTIFIER>** | Login to an external Yggdrasil server (authlib-injector) |
+| **json** | Start the persistent NDJSON server for GUI integration |
 | **help** | Display help information |
 
 ### Global Options
@@ -181,6 +183,56 @@ The API URL is resolved through the server's ALI header, so the same URL you pas
 mclc list
 ```
 
+### JSON Communication Mode
+
+`mclc json` starts a persistent NDJSON server for GUI integration. It reads one JSON request per line from stdin and writes one JSON event per line to stdout. Human-readable output is converted to `log` events, so the protocol stream never contains unstructured text.
+
+```bash
+mclc json
+```
+
+Startup emits `{"type":"ready","protocol":1,"version":"..."}`. A request carries a client-chosen `id`, which is echoed by the matching result or error; events emitted while that request is running also carry its `id`. Every protocol line is a complete JSON object on stdout, so clients can ignore stderr except for diagnostics.
+
+```json
+{"id":1,"command":"install","params":{"version":"1.21.1","loader":"fabric"}}
+{"type":"progress","id":1,"phase":"download","current":42,"total":317,"message":"..."}
+{"type":"result","id":1,"ok":true,"data":{"version_id":"fabric-loader-0.19.5-1.21.1"}}
+```
+
+Errors keep the same envelope with `ok: false`:
+
+```json
+{"type":"error","id":2,"ok":false,"error":"Unknown command: foo"}
+```
+
+Commands:
+
+| Command | Parameters | Result data |
+|---------|------------|-------------|
+| `ping` | none | `{"pong":true}` |
+| `shutdown` | none | `{"shutdown":true}`, then the server exits |
+| `java.list` | none | `{"runtimes":[...]}` |
+| `versions.list` | none | `{"versions":[...]}` |
+| `install` | `version`, optional `loader`, `loader_version`, `download_source`, `runtime` | `{"version_id":"..."}` |
+| `launch` | `version`, optional `username`, `access_token`, `jvm_args`, `auth`, `api_url`, `authlib_jar`, `runtime` | `{"launched":true,"version":"..."}` |
+| `login` | none | `{"username":"...","uuid":"..."}` |
+| `external_login` | `identifier`, `password`, `api_url`, optional `profile` | account details |
+| `accounts.list` | none | `{"accounts":[...],"msa":{...}}` (`msa` is `null` when no Microsoft account is cached) |
+
+Events other than results and errors:
+
+- `log` — `level` (`info`/`warn`) and `message`
+- `progress` — `phase`, `current`, `total`, and `message`
+- `device_code` — `user_code`, `verification_uri`, `expires_in`, and `message` during Microsoft login
+- `profiles` — available Yggdrasil characters when a selection is required
+
+Notes:
+
+- Requests are processed sequentially. `launch` returns after the game process has been spawned; the launcher does not wait for the game to exit.
+- If `external_login` has multiple profiles and no `profile` is given, the server emits a `profiles` event and returns `profile selection required`. Retry with the chosen profile id or name.
+- Passwords are only accepted as request parameters in JSON mode; they are never read from the terminal.
+- The global `--runtime` and `--download-source` options provide defaults that requests can override.
+
 ## How It Works
 
 ### Version Discovery and Installation
@@ -265,6 +317,9 @@ LauncherCore/
 ├── src/
 │   ├── main.rs           # Main entry point
 │   ├── cli.rs            # CLI argument definitions
+│   ├── commands.rs       # Shared install and launch command logic
+│   ├── output.rs         # Human/JSON output abstraction
+│   ├── json_server.rs    # Persistent NDJSON communication server
 │   ├── install.rs        # Version installation and file downloads
 │   ├── download.rs       # Download sources, URL mapping, and retry logic
 │   ├── version.rs        # Version JSON inheritance and merging

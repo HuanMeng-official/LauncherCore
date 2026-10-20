@@ -25,6 +25,7 @@
 - **多账号支持**：可保存多个外置账号，并在令牌过期时自动刷新
 - **凭据保护**：启动日志会隐藏访问令牌；Unix 下凭据文件使用 `0600` 权限
 - **自定义 JVM 参数**：支持传入自定义 JVM 参数进行性能调优
+- **JSON 通信模式**：常驻 NDJSON 服务向 GUI 前端提供安装、启动、登录和账号操作
 - **跨平台支持**：支持 Windows、Linux 和 macOS，包括 Linux ARM64 原生库处理
 - **详细错误处理**：使用 anyhow/thiserror 提供每一步的完整错误信息
 
@@ -60,6 +61,7 @@ mclc <命令> [选项]
 | **launch <版本>** | 启动已安装的 Minecraft 版本 |
 | **login** | 登录到微软账户 |
 | **external-login <账号>** | 登录到外置 Yggdrasil 服务器（authlib-injector） |
+| **json** | 启动面向 GUI 集成的常驻 NDJSON 服务 |
 | **help** | 显示帮助信息 |
 
 ### 全局选项
@@ -181,6 +183,56 @@ API 地址会通过服务器的 ALI 响应头解析，因此 `external-login` �
 mclc list
 ```
 
+### JSON 通信模式
+
+`mclc json` 会启动一个面向 GUI 集成的常驻 NDJSON 服务：从 stdin 每行读取一个 JSON 请求，向 stdout 每行输出一个 JSON 事件。原本的人类可读输出会转换为 `log` 事件，因此协议流中不会混入非结构化文本。
+
+```bash
+mclc json
+```
+
+启动时首先输出 `{"type":"ready","protocol":1,"version":"..."}`。每个请求带有一个由客户端指定的 `id`，对应的结果或错误会原样返回该 `id`；请求执行期间产生的事件也会携带该 `id`。协议在 stdout 上每行只输出一个完整的 JSON 对象，客户端可以忽略 stderr（仅用于诊断）：
+
+```json
+{"id":1,"command":"install","params":{"version":"1.21.1","loader":"fabric"}}
+{"type":"progress","id":1,"phase":"download","current":42,"total":317,"message":"..."}
+{"type":"result","id":1,"ok":true,"data":{"version_id":"fabric-loader-0.19.5-1.21.1"}}
+```
+
+错误使用相同的信封格式，`ok` 为 `false`：
+
+```json
+{"type":"error","id":2,"ok":false,"error":"Unknown command: foo"}
+```
+
+支持的命令：
+
+| 命令 | 参数 | 结果数据 |
+|------|------|----------|
+| `ping` | 无 | `{"pong":true}` |
+| `shutdown` | 无 | `{"shutdown":true}`，随后服务退出 |
+| `java.list` | 无 | `{"runtimes":[...]}` |
+| `versions.list` | 无 | `{"versions":[...]}` |
+| `install` | `version`，可选 `loader`、`loader_version`、`download_source`、`runtime` | `{"version_id":"..."}` |
+| `launch` | `version`，可选 `username`、`access_token`、`jvm_args`、`auth`、`api_url`、`authlib_jar`、`runtime` | `{"launched":true,"version":"..."}` |
+| `login` | 无 | `{"username":"...","uuid":"..."}` |
+| `external_login` | `identifier`、`password`、`api_url`，可选 `profile` | 账号信息 |
+| `accounts.list` | 无 | `{"accounts":[...],"msa":{...}}`（未缓存微软账号时 `msa` 为 `null`） |
+
+除结果和错误外的事件：
+
+- `log` — `level`（`info`/`warn`）和 `message`
+- `progress` — `phase`、`current`、`total` 和 `message`
+- `device_code` — 微软登录期间的 `user_code`、`verification_uri`、`expires_in` 和 `message`
+- `profiles` — 外置登录需要选择角色时返回的可用角色列表
+
+注意事项：
+
+- 请求会依次处理。`launch` 在游戏进程创建后即返回，不会等待游戏退出。
+- 如果 `external_login` 返回多个角色且未提供 `profile`，服务会输出 `profiles` 事件并返回 `profile selection required`；客户端应带上所选角色的 ID 或名称重试。
+- JSON 模式只接受请求参数中的密码，不会从终端读取。
+- 全局 `--runtime` 和 `--download-source` 选项提供默认值，请求参数可以覆盖它们。
+
 ## 运行原理
 
 ### 版本发现与安装
@@ -265,6 +317,9 @@ LauncherCore/
 ├── src/
 │   ├── main.rs           # 主入口
 │   ├── cli.rs            # CLI 参数定义
+│   ├── commands.rs       # 共享的安装与启动命令逻辑
+│   ├── output.rs         # 人类可读/JSON 输出抽象
+│   ├── json_server.rs    # 常驻 NDJSON 通信服务
 │   ├── install.rs        # 版本安装与文件下载
 │   ├── download.rs       # 下载源、URL 映射与重试
 │   ├── version.rs        # 版本 JSON 继承与合并
