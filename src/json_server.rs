@@ -173,10 +173,15 @@ async fn dispatch(
         "install" => {
             let params: InstallParams =
                 serde_json::from_value(params).context("Invalid install parameters")?;
-            let source = parse_download_source(params.download_source.as_deref())?;
+            let requested_source = match params.download_source.as_deref() {
+                Some(value) => Some(parse_download_source(Some(value))?),
+                None => None,
+            };
             let loader = parse_loader(params.loader.as_deref())?;
             let previous_source = manager.installer.source;
-            manager.installer.source = source;
+            if let Some(source) = requested_source {
+                manager.installer.source = source;
+            }
 
             let install_result = commands::install(
                 manager,
