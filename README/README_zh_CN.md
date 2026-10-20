@@ -14,6 +14,7 @@
 - **自动资源下载**：自动下载客户端 JAR、依赖库（包括原生库）和资源文件
 - **下载校验**：在信息可用时校验 HTTP 状态、文件大小和 SHA-1，先写临时文件再原子替换目标文件
 - **可靠安装**：下载、解压或资源索引解析失败时会中止安装，不再误报成功
+- **下载源与重试**：支持 Mojang 官方源、BMCLAPI 镜像或自动回退；失败请求会按退避策略重试
 - **多线程下载**：支持并发下载，加速安装过程（最多 16 个并行下载）
 - **进度可视化**：下载过程中实时显示进度条
 - **跨平台支持**：支持 Windows、Linux 和 macOS
@@ -68,6 +69,7 @@ mclc <命令> [选项]
 | 选项 | 描述 |
 |------|------|
 | `-r, --runtime <路径>` | 覆盖自动 Java 检测 |
+| `--download-source <来源>` | 下载源：`auto`（默认）、`official` 或 `bmclapi` |
 
 ### 启动选项
 
@@ -95,6 +97,12 @@ mclc <命令> [选项]
 ```bash
 mclc install 1.21.3
 mclc launch 1.21.3 --username 玩家名
+```
+
+使用 BMCLAPI 镜像（适合国内网络）：
+
+```bash
+mclc install 1.21.3 --download-source bmclapi
 ```
 
 使用自定义 Java 路径和 JVM 参数：
@@ -144,6 +152,7 @@ mclc list
    - 应用依赖库规则，只下载当前系统和架构可用的依赖库/原生库
    - 下载资源索引和所有资源文件
    - 在信息可用时校验 HTTP 状态、文件大小和 SHA-1，先写临时文件再原子替换
+   - 失败请求按指数退避重试；`auto` 源会回退到 BMCLAPI 镜像
    - 将原生库提取到版本独立目录
    - 使用并发下载并显示进度
 3. **启动过程**：
@@ -186,6 +195,7 @@ LauncherCore/
 │   ├── main.rs           # 主入口
 │   ├── cli.rs            # CLI 参数定义
 │   ├── install.rs        # 安装逻辑和下载
+│   ├── download.rs       # 下载源与重试逻辑
 │   ├── launch.rs         # 启动参数组装和执行
 │   ├── launch_manager.rs # 启动配置和账号存储
 │   ├── java.rs           # Java 运行时检测和选择
@@ -256,6 +266,14 @@ LauncherCore/
 
 ```bash
 mclc launch 1.21.3 --username 玩家名 --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
+```
+
+### 下载失败或卡住？
+
+下载会自动重试。如果 Mojang 服务器较慢或无法访问，可显式使用 BMCLAPI 镜像：
+
+```bash
+mclc install 1.21.3 --download-source bmclapi
 ```
 
 ### 启动失败或报错？

@@ -1,4 +1,5 @@
 use crate::auth::{Authenticator, cache_needs_refresh};
+use crate::download::DownloadSource;
 use crate::install::Installer;
 use crate::launch::Launcher;
 use crate::models::AuthCache;
@@ -63,7 +64,7 @@ pub struct LauncherManager {
 }
 
 impl LauncherManager {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new(source: DownloadSource) -> anyhow::Result<Self> {
         let current_dir = std::env::current_dir()?;
         let minecraft_dir = current_dir.join(".minecraft");
         fs::create_dir_all(&minecraft_dir)?;
@@ -98,6 +99,7 @@ impl LauncherManager {
                 libraries_dir,
                 assets_objects_dir,
                 assets_indexes_dir,
+                source,
             },
             authenticator: Authenticator::default(),
             config_dir,
@@ -345,7 +347,7 @@ impl LauncherManager {
 
 impl Default for LauncherManager {
     fn default() -> Self {
-        Self::new().expect("Failed to initialize LauncherManager")
+        Self::new(DownloadSource::Auto).expect("Failed to initialize LauncherManager")
     }
 }
 
@@ -368,6 +370,7 @@ mod tests {
                 libraries_dir: minecraft_dir.join("libraries"),
                 assets_objects_dir: minecraft_dir.join("assets/objects"),
                 assets_indexes_dir: minecraft_dir.join("assets/indexes"),
+                source: DownloadSource::Auto,
             },
             authenticator: Authenticator::default(),
             config_dir,

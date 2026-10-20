@@ -1,3 +1,4 @@
+use crate::download::DownloadSource;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -23,6 +24,15 @@ pub struct Cli {
     /// Override automatic Java detection
     #[arg(long = "runtime", short = 'r', value_name = "PATH", global = true)]
     pub java_runtime_path: Option<String>,
+
+    /// Download source for game files
+    #[arg(
+        long = "download-source",
+        value_enum,
+        default_value = "auto",
+        global = true
+    )]
+    pub download_source: DownloadSource,
 }
 
 #[derive(Subcommand)]

@@ -14,6 +14,7 @@
 - **Automatic Resource Downloads**: Downloads client JAR, libraries (including natives), and asset files automatically
 - **Verified Downloads**: Validates HTTP status, file size, and SHA-1 metadata where available, writes through a temporary file, and atomically replaces the destination
 - **Reliable Installs**: Download, extraction, and asset-index errors abort the install instead of reporting success
+- **Download Sources & Retry**: Supports official Mojang, the BMCLAPI mirror, or automatic fallback; failed requests are retried with backoff
 - **Concurrent Downloads**: Concurrent downloading for faster installation (up to 16 parallel downloads)
 - **Progress Visualization**: Real-time progress bar during downloads
 - **Cross-Platform**: Supports Windows, Linux, and macOS
@@ -68,6 +69,7 @@ mclc <COMMAND> [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `-r, --runtime <PATH>` | Override automatic Java detection |
+| `--download-source <SOURCE>` | Download source: `auto` (default), `official`, or `bmclapi` |
 
 ### Launch Options
 
@@ -95,6 +97,12 @@ mclc <COMMAND> [OPTIONS]
 ```bash
 mclc install 1.21.3
 mclc launch 1.21.3 --username PlayerName
+```
+
+Use the BMCLAPI mirror (useful in mainland China):
+
+```bash
+mclc install 1.21.3 --download-source bmclapi
 ```
 
 With custom Java path and JVM arguments:
@@ -144,6 +152,7 @@ mclc list
    - Applies library rules and downloads only libraries/natives valid for the current OS and architecture
    - Downloads the asset index and all asset files
    - Verifies HTTP status, size, and SHA-1 where available; writes to a temporary file and atomically replaces the destination
+   - Retries failed requests with exponential backoff; `auto` source falls back to the BMCLAPI mirror
    - Extracts native libraries to version-specific directories
    - Uses concurrent downloading with progress tracking
 3. **Launch Process**:
@@ -186,6 +195,7 @@ LauncherCore/
 │   ├── main.rs           # Main entry point
 │   ├── cli.rs            # CLI argument definitions
 │   ├── install.rs        # Installation logic and downloads
+│   ├── download.rs       # Download sources and retry logic
 │   ├── launch.rs         # Launch argument assembly and execution
 │   ├── launch_manager.rs # Launcher configuration and account storage
 │   ├── java.rs           # Java runtime detection and selection
@@ -256,6 +266,14 @@ Run `mclc java` to see which Java runtimes were detected. Install the Java major
 
 ```bash
 mclc launch 1.21.3 --username Player --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
+```
+
+### Downloads fail or stall?
+
+Downloads are retried automatically. If Mojang's servers are slow or unreachable, use the BMCLAPI mirror explicitly:
+
+```bash
+mclc install 1.21.3 --download-source bmclapi
 ```
 
 ### Launch fails with errors?

@@ -7,6 +7,7 @@ mod models;
 mod auth;
 mod yggdrasil;
 mod java;
+mod download;
 #[cfg(test)]
 mod test_http;
 
@@ -44,7 +45,7 @@ fn resolve_password(cli_password: Option<&str>) -> Result<String> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let manager = LauncherManager::new()?;
+    let manager = LauncherManager::new(cli.download_source)?;
     let global_java_path = cli.java_runtime_path;
 
     match &cli.command {

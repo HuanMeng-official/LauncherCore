@@ -1,12 +1,11 @@
+use crate::download::{self, DownloadSource};
 use crate::models::*;
 use anyhow::Context;
 use futures_util::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
-use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
@@ -61,18 +60,15 @@ pub struct Installer {
     pub libraries_dir: std::path::PathBuf,
     pub assets_objects_dir: std::path::PathBuf,
     pub assets_indexes_dir: std::path::PathBuf,
+    pub source: DownloadSource,
 }
 
 impl Installer {
     pub async fn list_versions(&self) -> anyhow::Result<()> {
         println!("Fetching available Minecraft versions...");
         let client = Client::new();
-        let manifest: VersionManifest = client
-            .get(VERSION_MANIFEST_URL)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let manifest: VersionManifest =
+            download::fetch_json(&client, VERSION_MANIFEST_URL, self.source).await?;
         println!("Available versions:");
         for version in &manifest.versions {
             println!("  {} ({})", version.id, version.version_type);
@@ -82,6 +78,7 @@ impl Installer {
 
     pub async fn install_version(&self, version_id: &str) -> anyhow::Result<()> {
         println!("Installing Minecraft version: {}", version_id);
+        println!("Download source: {}", self.source.label());
 
         let client = Client::new();
         let (_version_info, version_details) = self.fetch_version_details(&client, version_id).await?;
@@ -139,10 +136,12 @@ impl Installer {
         if !first_phase_tasks.is_empty() {
             println!("Downloading metadata...");
             let client = Arc::new(client);
+            let source = self.source;
             let results = stream::iter(first_phase_tasks)
-                .map(|task| {
+                .map(move |task| {
                     let client = Arc::clone(&client);
                     let url = task.url.clone();
+                    let urls = download::url_candidates(&url, source);
                     let path = task.path.clone();
                     let task_type = task.task_type.clone();
                     let sha1 = task.sha1.clone();
@@ -150,8 +149,14 @@ impl Installer {
                     tokio::spawn(async move {
                         (
                             task_type,
-                            Self::download_file(&client, &url, &path, sha1.as_deref(), size)
-                                .await,
+                            download::download_file(
+                                &client,
+                                &urls,
+                                &path,
+                                sha1.as_deref(),
+                                size,
+                            )
+                            .await,
                         )
                     })
                 })
@@ -213,15 +218,17 @@ impl Installer {
         let counter = Arc::new(AtomicU64::new(0));
         let pb_clone = Arc::clone(&pb);
 
+        let source = self.source;
         let download_results = stream::iter(tasks)
             .map(|task| {
                 let client = Arc::clone(&client);
                 let counter = Arc::clone(&counter);
                 let pb = Arc::clone(&pb_clone);
+                let urls = download::url_candidates(&task.url, source);
                 tokio::spawn(async move {
-                    let result = Self::download_file(
+                    let result = download::download_file(
                         &client,
-                        &task.url,
+                        &urls,
                         &task.path,
                         task.sha1.as_deref(),
                         task.size,
@@ -280,14 +287,16 @@ impl Installer {
         client: &Client,
         version_id: &str,
     ) -> anyhow::Result<(VersionInfo, VersionDetails)> {
-        let manifest: VersionManifest = client.get(VERSION_MANIFEST_URL).send().await?.json().await?;
+        let manifest: VersionManifest =
+            download::fetch_json(client, VERSION_MANIFEST_URL, self.source).await?;
         let version_info = manifest
             .versions
             .iter()
             .find(|v| v.id == version_id)
             .ok_or_else(|| anyhow::anyhow!("Version {} not found", version_id))?;
 
-        let version_details: VersionDetails = client.get(&version_info.url).send().await?.json().await?;
+        let version_details: VersionDetails =
+            download::fetch_json(client, &version_info.url, self.source).await?;
         Ok((version_info.clone(), version_details))
     }
 
@@ -447,97 +456,6 @@ impl Installer {
         Ok(())
     }
 
-    async fn download_file(
-        client: &Client,
-        url: &str,
-        path: &Path,
-        expected_sha1: Option<&str>,
-        expected_size: Option<u64>,
-    ) -> anyhow::Result<()> {
-        if path.exists() {
-            let size_matches = expected_size
-                .map(|expected| {
-                    fs::metadata(path)
-                        .map(|metadata| metadata.len() == expected)
-                        .unwrap_or(false)
-                })
-                .unwrap_or(true);
-            if size_matches {
-                return Ok(());
-            }
-        }
-
-        let response = client
-            .get(url)
-            .send()
-            .await?
-            .error_for_status()
-            .with_context(|| format!("Failed to download {}", url))?;
-
-        if let (Some(expected), Some(actual)) = (expected_size, response.content_length()) {
-            if expected != actual {
-                anyhow::bail!(
-                    "Unexpected content length for {}: expected {} bytes, got {}",
-                    url,
-                    expected,
-                    actual
-                );
-            }
-        }
-
-        let parent = path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("Invalid download path: {:?}", path))?;
-        fs::create_dir_all(parent)?;
-
-        let mut temp = tempfile::NamedTempFile::new_in(parent)
-            .with_context(|| format!("Failed to create temporary file in {:?}", parent))?;
-
-        let mut hasher = Sha1::new();
-        let mut downloaded = 0u64;
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.context("Failed to read chunk")?;
-            temp.write_all(&chunk).context("Failed to write chunk")?;
-            hasher.update(&chunk);
-            downloaded += chunk.len() as u64;
-        }
-        temp.flush().context("Failed to flush downloaded data")?;
-
-        if let Some(expected) = expected_size {
-            if downloaded != expected {
-                anyhow::bail!(
-                    "Size mismatch for {}: expected {} bytes, got {}",
-                    url,
-                    expected,
-                    downloaded
-                );
-            }
-        }
-
-        if let Some(expected) = expected_sha1 {
-            let actual: String = hasher
-                .finalize()
-                .iter()
-                .map(|byte| format!("{:02x}", byte))
-                .collect();
-            if !actual.eq_ignore_ascii_case(expected) {
-                anyhow::bail!(
-                    "SHA-1 mismatch for {}: expected {}, got {}",
-                    url,
-                    expected,
-                    actual
-                );
-            }
-        }
-
-        temp.persist(path)
-            .map_err(|e| anyhow::anyhow!("Failed to save downloaded file {:?}: {}", path, e))?;
-
-        Ok(())
-    }
-
     fn extract_lwjgl3_native_library(&self, jar_path: &Path, extract_dir: &Path) -> anyhow::Result<()> {
         let file = std::fs::File::open(jar_path)
             .with_context(|| format!("Failed to open native JAR file: {:?}", jar_path))?;
@@ -595,7 +513,25 @@ mod tests {
             libraries_dir: dir.join("libraries"),
             assets_objects_dir: dir.join("assets/objects"),
             assets_indexes_dir: dir.join("assets/indexes"),
+            source: DownloadSource::Official,
         }
+    }
+
+    async fn download_one(
+        client: &Client,
+        url: &str,
+        path: &Path,
+        expected_sha1: Option<&str>,
+        expected_size: Option<u64>,
+    ) -> anyhow::Result<()> {
+        download::download_file(
+            client,
+            &[url.to_string()],
+            path,
+            expected_sha1,
+            expected_size,
+        )
+        .await
     }
 
     #[tokio::test]
@@ -610,7 +546,7 @@ mod tests {
         let path = dir.path().join("client.jar");
         let client = Client::new();
 
-        let result = Installer::download_file(
+        let result = download_one(
             &client,
             &format!("{}/client.jar", server.base_url),
             &path,
@@ -632,7 +568,7 @@ mod tests {
         let path = dir.path().join("library.jar");
         let client = Client::new();
 
-        let result = Installer::download_file(
+        let result = download_one(
             &client,
             &format!("{}/library.jar", server.base_url),
             &path,
@@ -655,7 +591,7 @@ mod tests {
         let path = dir.path().join("asset.bin");
         let client = Client::new();
 
-        Installer::download_file(
+        download_one(
             &client,
             &format!("{}/asset.bin", server.base_url),
             &path,
@@ -678,7 +614,7 @@ mod tests {
         let path = dir.path().join("asset.bin");
         fs::write(&path, b"hel").unwrap();
 
-        Installer::download_file(
+        download_one(
             &Client::new(),
             &format!("{}/asset.bin", server.base_url),
             &path,
