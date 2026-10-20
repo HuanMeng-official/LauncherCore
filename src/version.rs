@@ -82,10 +82,7 @@ fn merge_libraries(parent: Vec<Library>, child: Vec<Library>) -> Vec<Library> {
     merged
 }
 
-fn merge_arguments(
-    parent: Option<Arguments>,
-    child: Option<Arguments>,
-) -> Option<Arguments> {
+fn merge_arguments(parent: Option<Arguments>, child: Option<Arguments>) -> Option<Arguments> {
     match (parent, child) {
         (None, None) => None,
         (Some(arguments), None) | (None, Some(arguments)) => Some(arguments),
@@ -330,7 +327,9 @@ mod tests {
             r#"{"id":"b","type":"release","inheritsFrom":"a","mainClass":"B"}"#,
         );
 
-        let error = load_version_details(temp.path(), "a").unwrap_err().to_string();
+        let error = load_version_details(temp.path(), "a")
+            .unwrap_err()
+            .to_string();
 
         assert!(error.contains("Circular"));
     }

@@ -217,6 +217,7 @@ mclc json
 | `shutdown` | 无 | `{"shutdown":true}`，随后服务退出 |
 | `java.list` | 无 | `{"runtimes":[...]}` |
 | `versions.list` | 无 | `{"versions":[...]}` |
+| `installed.list` | 无 | `{"versions":[{"id":"..."}]}` |
 | `install` | `version`，可选 `loader`、`loader_version`、`download_source`、`runtime` | `{"version_id":"..."}` |
 | `launch` | `version`，可选 `username`、`access_token`、`jvm_args`、`auth`、`api_url`、`authlib_jar`、`runtime` | `{"launched":true,"version":"..."}` |
 | `login` | 无 | `{"username":"...","uuid":"..."}` |
@@ -248,10 +249,11 @@ mclc web --port 7420 --token <token>
 
 - WebSocket 地址：`ws://127.0.0.1:7420/ws`
 - 健康检查：`http://127.0.0.1:7420/health`
+- 启动器核心不提供也不托管前端页面。前端需要单独部署；默认允许 localhost 上的 Vite 开发服务器连接。
 - 服务默认绑定 `127.0.0.1`（可用 `--host` 修改地址）。默认允许 `http://localhost:5173` 这类回环地址来源；其他前端地址需要通过 `--allow-origin <ORIGIN>` 显式允许。
 - 设置 `--token` 后，浏览器连接 `ws://127.0.0.1:7420/ws?token=<token>`，非浏览器客户端也可以通过 `Authorization: Bearer <token>` 传递。
 - 请求、结果和事件的结构与上面的 JSON 模式完全一致。桥接层会在内部重映射请求 ID，因此多个浏览器标签页可以共用一个启动器；请求仍然串行处理。
-- 新 WebSocket 连接会收到当前的 `ready` 事件。事件不会重放，重连后应重新查询 `accounts.list`、`java.list` 和 `versions.list`。
+- 新 WebSocket 连接会收到当前的 `ready` 事件。事件不会重放，重连后应重新查询 `accounts.list`、`java.list`、`installed.list` 和 `versions.list`。
 - `mclc web` 会以当前工作目录作为游戏根目录并在其下创建 `.minecraft`。全局 `--runtime` 和 `--download-source` 选项会传给启动器子进程。
 - 除非清楚风险，否则不要绑定 `0.0.0.0`。绑定非回环地址时必须提供 `--token`，同时应为前端设置明确的 `--allow-origin`。
 

@@ -55,10 +55,7 @@ async fn read_request(socket: &mut TcpStream) -> RecordedRequest {
             break;
         }
         buffer.extend_from_slice(&chunk[..n]);
-        if let Some(index) = buffer
-            .windows(4)
-            .position(|window| window == b"\r\n\r\n")
-        {
+        if let Some(index) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
             header_end = Some(index + 4);
         }
     }
@@ -91,11 +88,7 @@ async fn read_request(socket: &mut TcpStream) -> RecordedRequest {
     let path = parts.next().unwrap_or("").to_string();
     let body = String::from_utf8_lossy(&buffer[header_end..]).to_string();
 
-    RecordedRequest {
-        method,
-        path,
-        body,
-    }
+    RecordedRequest { method, path, body }
 }
 
 pub fn response(status: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {

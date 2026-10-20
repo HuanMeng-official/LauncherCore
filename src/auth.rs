@@ -22,11 +22,13 @@ fn cache_needs_refresh_at(cache: &AuthCache, now: u64) -> bool {
     }
 }
 
-const MS_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
+const MS_DEVICE_CODE_URL: &str =
+    "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
 const MS_TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 const XBL_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
-const MC_LOGIN_WITH_XBOX_URL: &str = "https://api.minecraftservices.com/authentication/login_with_xbox";
+const MC_LOGIN_WITH_XBOX_URL: &str =
+    "https://api.minecraftservices.com/authentication/login_with_xbox";
 const MC_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
 
 #[derive(Debug)]
@@ -51,8 +53,15 @@ impl Authenticator {
 
         if !res.status().is_success() {
             let status = res.status();
-            let body = res.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(anyhow::anyhow!("Failed to get device code: {} - {}", status, body));
+            let body = res
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(anyhow::anyhow!(
+                "Failed to get device code: {} - {}",
+                status,
+                body
+            ));
         }
 
         let device_code_res: DeviceCodeResponse = res.json().await?;
@@ -138,7 +147,11 @@ impl Authenticator {
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Failed to get XBL token: {} - {}", status, body));
+            return Err(anyhow::anyhow!(
+                "Failed to get XBL token: {} - {}",
+                status,
+                body
+            ));
         }
 
         let xbl_res: XblResponse = res.json().await?;
@@ -166,7 +179,11 @@ impl Authenticator {
             "TokenType": "JWT"
         });
 
-        let res = client.post(XSTS_AUTH_URL).json(&request_body).send().await?;
+        let res = client
+            .post(XSTS_AUTH_URL)
+            .json(&request_body)
+            .send()
+            .await?;
 
         if !res.status().is_success() {
             let status = res.status();
@@ -186,7 +203,11 @@ impl Authenticator {
                     ));
                 }
             }
-            return Err(anyhow::anyhow!("Failed to get XSTS token: {} - {}", status, body));
+            return Err(anyhow::anyhow!(
+                "Failed to get XSTS token: {} - {}",
+                status,
+                body
+            ));
         }
 
         let xsts_res: XstsResponse = res.json().await?;
@@ -222,7 +243,11 @@ impl Authenticator {
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Failed to login to Minecraft: {} - {}", status, body));
+            return Err(anyhow::anyhow!(
+                "Failed to login to Minecraft: {} - {}",
+                status,
+                body
+            ));
         }
 
         let mc_login_res: MinecraftLoginResponse = res.json().await?;
@@ -256,7 +281,11 @@ impl Authenticator {
         }
 
         let profile: MinecraftProfile = res.json().await?;
-        crate::outln!("Retrieved Minecraft profile: {} ({})", profile.name, profile.id);
+        crate::outln!(
+            "Retrieved Minecraft profile: {} ({})",
+            profile.name,
+            profile.id
+        );
         Ok(profile)
     }
 
@@ -294,11 +323,10 @@ impl Authenticator {
         Ok(res.json::<MicrosoftTokenResponse>().await?)
     }
 
-    pub async fn refresh_authentication(
-        &self,
-        refresh_token: &str,
-    ) -> anyhow::Result<AuthCache> {
-        let ms_token_res = self.refresh_ms_token_at(refresh_token, MS_TOKEN_URL).await?;
+    pub async fn refresh_authentication(&self, refresh_token: &str) -> anyhow::Result<AuthCache> {
+        let ms_token_res = self
+            .refresh_ms_token_at(refresh_token, MS_TOKEN_URL)
+            .await?;
         self.complete_authentication(ms_token_res, Some(refresh_token.to_string()))
             .await
     }
@@ -312,10 +340,10 @@ impl Authenticator {
 
         let (xbl_token, user_hash) = self.get_xbl_token(&ms_access_token).await?;
         let (xsts_token, _) = self.get_xsts_token(&xbl_token).await?;
-        let mc_login_res = self
-            .login_to_minecraft(&xsts_token, &user_hash)
+        let mc_login_res = self.login_to_minecraft(&xsts_token, &user_hash).await?;
+        let profile = self
+            .get_minecraft_profile(&mc_login_res.access_token)
             .await?;
-        let profile = self.get_minecraft_profile(&mc_login_res.access_token).await?;
 
         let formatted_uuid = format!(
             "{}-{}-{}-{}-{}",
@@ -372,10 +400,9 @@ mod tests {
 
     #[test]
     fn old_cache_without_refresh_fields_still_deserializes() {
-        let cache: AuthCache = serde_json::from_str(
-            r#"{"access_token":"token","uuid":"uuid","username":"Alice"}"#,
-        )
-        .unwrap();
+        let cache: AuthCache =
+            serde_json::from_str(r#"{"access_token":"token","uuid":"uuid","username":"Alice"}"#)
+                .unwrap();
 
         assert!(cache.refresh_token.is_none());
         assert!(cache.expires_at.is_none());
@@ -395,10 +422,7 @@ mod tests {
         let authenticator = Authenticator::new("client-id".to_string());
 
         let response = authenticator
-            .refresh_ms_token_at(
-                "old-refresh-token",
-                &format!("{}/token", server.base_url),
-            )
+            .refresh_ms_token_at("old-refresh-token", &format!("{}/token", server.base_url))
             .await
             .unwrap();
 

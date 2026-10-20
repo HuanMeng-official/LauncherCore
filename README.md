@@ -217,6 +217,7 @@ Commands:
 | `shutdown` | none | `{"shutdown":true}`, then the server exits |
 | `java.list` | none | `{"runtimes":[...]}` |
 | `versions.list` | none | `{"versions":[...]}` |
+| `installed.list` | none | `{"versions":[{"id":"..."}]}` |
 | `install` | `version`, optional `loader`, `loader_version`, `download_source`, `runtime` | `{"version_id":"..."}` |
 | `launch` | `version`, optional `username`, `access_token`, `jvm_args`, `auth`, `api_url`, `authlib_jar`, `runtime` | `{"launched":true,"version":"..."}` |
 | `login` | none | `{"username":"...","uuid":"..."}` |
@@ -239,7 +240,7 @@ Notes:
 
 ### Web Backend for Browser Frontends
 
-`mclc web` exposes the same JSON protocol over a local WebSocket so a separately hosted browser frontend can drive the launcher. It starts an internal `mclc json` process; it does not serve frontend assets.
+`mclc web` exposes the same JSON protocol over a local WebSocket so a separately hosted browser frontend can drive the launcher. It starts an internal `mclc json` process and does not serve frontend assets.
 
 ```bash
 mclc web
@@ -248,10 +249,11 @@ mclc web --port 7420 --token <token>
 
 - WebSocket endpoint: `ws://127.0.0.1:7420/ws`
 - Health endpoint: `http://127.0.0.1:7420/health`
+- The launcher core does not provide or serve a frontend. Host your own frontend separately; a Vite dev server on localhost is allowed by default.
 - The server binds to `127.0.0.1` by default (`--host` changes the address). Loopback origins such as `http://localhost:5173` are allowed; add `--allow-origin <ORIGIN>` for other frontends.
 - With `--token`, connect to `ws://127.0.0.1:7420/ws?token=<token>`, or pass `Authorization: Bearer <token>` from a non-browser client.
 - Requests, results, and events keep the shapes documented above. The bridge remaps request ids internally so multiple browser tabs can share one launcher; requests are still processed sequentially.
-- New WebSocket clients receive the current `ready` event. Events are not replayed, so re-query `accounts.list`, `java.list`, and `versions.list` after reconnecting.
+- New WebSocket clients receive the current `ready` event. Events are not replayed, so re-query `accounts.list`, `java.list`, `installed.list`, and `versions.list` after reconnecting.
 - Run `mclc web` from the desired game root; `.minecraft` is created there. Global `--runtime` and `--download-source` options are passed to the launcher subprocess.
 - Do not bind to `0.0.0.0` unless you understand the risk. A non-loopback bind requires `--token`; also provide explicit `--allow-origin` values for the frontend.
 

@@ -206,6 +206,7 @@ mclc json --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
 | `shutdown` | 无 | `{"shutdown":true}` | 返回结果后退出 |
 | `java.list` | 无 | `{"runtimes":[...]}` | 扫描本机 Java |
 | `versions.list` | 无 | `{"versions":[...]}` | 网络请求 |
+| `installed.list` | 无 | `{"versions":[{"id":"..."}]}` | 读取本地 versions 目录 |
 | `install` | 对象 | `{"version_id":"..."}` | 下载可能耗时较长 |
 | `launch` | 对象 | `{"launched":true,"version":"..."}` | 创建游戏进程后返回 |
 | `login` | 无 | `{"username":"...","uuid":"..."}` | 设备码流程期间阻塞 |
@@ -513,6 +514,30 @@ mclc json --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
 - 没有微软账号缓存或缓存无法读取时，`msa` 为 `null`。
 - 该响应永远不会包含访问令牌。
 
+### 5.10 `installed.list`
+
+返回游戏 `versions` 目录下存在可读 `<id>/<id>.json` 的版本 ID，包括原版安装和加载器配置。
+
+结果：
+
+```json
+{
+  "type": "result",
+  "id": 10,
+  "ok": true,
+  "data": {
+    "versions": [
+      {"id": "1.21.1"},
+      {"id": "fabric-loader-0.19.5-1.21.1"}
+    ]
+  }
+}
+```
+
+- 列表按 ID 排序。
+- 它读取的是服务启动时固定的工作目录。
+- 已安装版本选择器应使用该命令；`versions.list` 只包含远程版本清单。
+
 ---
 
 ## 6. 事件
@@ -704,7 +729,7 @@ function onChildExit():
 
 - 请求 ID 会在桥接层内部重映射；返回给浏览器时，会恢复成该连接自己的 ID。
 - 多个 WebSocket 客户端可以共用一个启动器。请求全局串行，结果只发给发起请求的连接；无法关联的事件会以 `id: null` 广播。
-- 每个新连接都会收到当前的 `ready` 事件。事件不会重放；重连后应重新查询 `accounts.list`、`java.list` 和 `versions.list`。请求在执行中断开后仍会继续，但结果只会发送给仍然打开的连接。
+- 每个新连接都会收到当前的 `ready` 事件。事件不会重放；重连后应重新查询 `accounts.list`、`java.list`、`installed.list` 和 `versions.list`。请求在执行中断开后仍会继续，但结果只会发送给仍然打开的连接。
 - 启动器子进程退出时，客户端会收到 Web 专用的 `launcher_exit` 事件（`id: null`），并且 `/health` 会返回 `launcher_alive: false`。发送 `shutdown` 只会停止启动器子进程，Web 服务仍可用，并且不会自动重启子进程。
 - `mclc web` 不提供前端静态文件。前端需要单独部署；localhost 上的 Vite 开发服务器无需额外参数即可连接。直接用 `file://` 打开的页面会发送 `Origin: null`，仅在可信的本地开发场景下用 `--allow-origin null` 显式允许。
 - 启动器子进程继承 `mclc web` 的工作目录，因此应从游戏根目录启动。`--runtime` 和 `--download-source` 会转发给子进程。

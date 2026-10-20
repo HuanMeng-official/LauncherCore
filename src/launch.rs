@@ -115,10 +115,7 @@ fn rules_allow(rules: &[serde_json::Value], ctx: &ArgumentContext) -> bool {
     allowed
 }
 
-fn evaluate_arguments(
-    arguments: &[serde_json::Value],
-    ctx: &ArgumentContext,
-) -> Vec<String> {
+fn evaluate_arguments(arguments: &[serde_json::Value], ctx: &ArgumentContext) -> Vec<String> {
     let mut evaluated = Vec::new();
 
     for argument in arguments {
@@ -219,7 +216,10 @@ fn build_jvm_arguments(
     if let (Some(jar_path), Some(prefetched)) = (authlib_injector_jar, prefetched_metadata) {
         let api = api_url.unwrap_or("");
         args.push(format!("-javaagent:{}={}", jar_path.display(), api));
-        args.push(format!("-Dauthlibinjector.yggdrasil.prefetched={}", prefetched));
+        args.push(format!(
+            "-Dauthlibinjector.yggdrasil.prefetched={}",
+            prefetched
+        ));
         crate::outln!(
             "Using authlib-injector: {} with API: {}",
             jar_path.display(),
@@ -227,7 +227,10 @@ fn build_jvm_arguments(
         );
     }
 
-    if !args.iter().any(|arg| arg.starts_with("-Djava.library.path=")) {
+    if !args
+        .iter()
+        .any(|arg| arg.starts_with("-Djava.library.path="))
+    {
         args.push(format!("-Djava.library.path={}", ctx.natives_dir));
     }
 
@@ -254,7 +257,10 @@ fn redact_sensitive_arguments(args: &[String]) -> Vec<String> {
             continue;
         }
 
-        if matches!(arg.as_str(), "--accessToken" | "--session" | "--access-token") {
+        if matches!(
+            arg.as_str(),
+            "--accessToken" | "--session" | "--access-token"
+        ) {
             redact_next = true;
         } else if let Some((flag, _)) = arg.split_once('=') {
             if flag == "--accessToken" || flag == "--session" {
@@ -267,10 +273,7 @@ fn redact_sensitive_arguments(args: &[String]) -> Vec<String> {
     redacted
 }
 
-fn build_game_arguments(
-    version_details: &VersionDetails,
-    ctx: &ArgumentContext,
-) -> Vec<String> {
+fn build_game_arguments(version_details: &VersionDetails, ctx: &ArgumentContext) -> Vec<String> {
     if let Some(arguments) = &version_details.arguments {
         if !arguments.game.is_empty() {
             return evaluate_arguments(&arguments.game, ctx);
@@ -343,8 +346,7 @@ impl Launcher {
             return Err(anyhow::anyhow!("Version {} not found", version_id));
         }
 
-        let version_details =
-            crate::version::load_version_details(&self.versions_dir, version_id)?;
+        let version_details = crate::version::load_version_details(&self.versions_dir, version_id)?;
 
         let required_java = version_details
             .java_version
@@ -356,8 +358,7 @@ impl Launcher {
 
         // Verify and extract native libraries if needed
         let version_natives_dir = version_dir.join("natives");
-        self.verify_and_extract_natives(
-            &version_details, &version_natives_dir)?;
+        self.verify_and_extract_natives(&version_details, &version_natives_dir)?;
 
         let classpath = self.build_classpath(&version_details)?;
 
@@ -446,11 +447,8 @@ impl Launcher {
 
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
-        let natives = crate::models::selected_native_artifacts(
-            &version_details.libraries,
-            os,
-            arch,
-        );
+        let natives =
+            crate::models::selected_native_artifacts(&version_details.libraries, os, arch);
         let mut needs_extraction = false;
 
         for artifact in &natives {
@@ -482,9 +480,7 @@ impl Launcher {
         Ok(())
     }
 
-    fn check_natives_exist(
-        &self, natives_dir: &Path
-    ) -> bool {
+    fn check_natives_exist(&self, natives_dir: &Path) -> bool {
         if !natives_dir.exists() {
             return false;
         }
@@ -510,7 +506,9 @@ impl Launcher {
     }
 
     fn extract_lwjgl3_native_library(
-        &self, jar_path: &Path, extract_dir: &Path
+        &self,
+        jar_path: &Path,
+        extract_dir: &Path,
     ) -> anyhow::Result<()> {
         let file = std::fs::File::open(jar_path)
             .with_context(|| format!("Failed to open native JAR file: {:?}", jar_path))?;
@@ -518,19 +516,32 @@ impl Launcher {
             .with_context(|| format!("Failed to read ZIP archive: {:?}", jar_path))?;
 
         for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .with_context(|| format!("Failed to get file entry {} from archive: {:?}", i, jar_path))?;
-            let outpath = extract_dir.join(
-                file.mangled_name()
-                    .with_context(|| format!("Failed to get entry name {} from archive: {:?}", i, jar_path))?,
-            );
+            let mut file = archive.by_index(i).with_context(|| {
+                format!(
+                    "Failed to get file entry {} from archive: {:?}",
+                    i, jar_path
+                )
+            })?;
+            let outpath = extract_dir.join(file.mangled_name().with_context(|| {
+                format!(
+                    "Failed to get entry name {} from archive: {:?}",
+                    i, jar_path
+                )
+            })?);
             let file_name = file
                 .name()
-                .with_context(|| format!("Failed to get entry name {} from archive: {:?}", i, jar_path))?
+                .with_context(|| {
+                    format!(
+                        "Failed to get entry name {} from archive: {:?}",
+                        i, jar_path
+                    )
+                })?
                 .to_lowercase();
 
-            if file_name.ends_with(".dll") || file_name.ends_with(".so") || file_name.ends_with(".dylib") {
+            if file_name.ends_with(".dll")
+                || file_name.ends_with(".so")
+                || file_name.ends_with(".dylib")
+            {
                 if let Some(p) = outpath.parent() {
                     if !p.exists() {
                         fs::create_dir_all(p).with_context(|| {
@@ -538,8 +549,9 @@ impl Launcher {
                         })?;
                     }
                 }
-                let mut outfile = std::fs::File::create(&outpath)
-                    .with_context(|| format!("Failed to create output file for native: {:?}", outpath))?;
+                let mut outfile = std::fs::File::create(&outpath).with_context(|| {
+                    format!("Failed to create output file for native: {:?}", outpath)
+                })?;
                 std::io::copy(&mut file, &mut outfile)
                     .with_context(|| format!("Failed to write native file: {:?}", outpath))?;
             }
@@ -547,10 +559,7 @@ impl Launcher {
         Ok(())
     }
 
-    fn build_classpath(
-        &self,
-        version_details: &VersionDetails,
-    ) -> anyhow::Result<String> {
+    fn build_classpath(&self, version_details: &VersionDetails) -> anyhow::Result<String> {
         let jar_id = version_details
             .jar
             .as_deref()
@@ -581,7 +590,6 @@ impl Launcher {
             .collect::<Vec<_>>()
             .join(if cfg!(windows) { ";" } else { ":" }))
     }
-
 }
 
 #[cfg(test)]
@@ -635,7 +643,8 @@ mod tests {
             }"#,
         );
 
-        let mac_args = build_jvm_arguments(&details, &test_context("macos"), None, None, None, None);
+        let mac_args =
+            build_jvm_arguments(&details, &test_context("macos"), None, None, None, None);
         assert!(mac_args.contains(&"-XstartOnFirstThread".to_string()));
         assert!(mac_args.contains(&"-Djava.library.path=/natives".to_string()));
 
@@ -733,7 +742,10 @@ mod tests {
             .iter()
             .position(|arg| arg == "-cp")
             .expect("classpath must be present");
-        assert_eq!(args[classpath_flag + 1], "/libraries/a.jar:/libraries/b.jar");
+        assert_eq!(
+            args[classpath_flag + 1],
+            "/libraries/a.jar:/libraries/b.jar"
+        );
         assert!(args.contains(&"-Xmx4G".to_string()));
         assert!(args.contains(&"-Dcustom=1".to_string()));
     }
@@ -784,9 +796,11 @@ mod tests {
         assert_eq!(redacted[3], "<redacted>");
         assert_eq!(redacted[5], "<redacted>");
         assert!(!redacted.iter().any(|arg| arg == "secret-token"));
-        assert!(!redacted
-            .iter()
-            .any(|arg| arg.starts_with("token:secret-token")));
+        assert!(
+            !redacted
+                .iter()
+                .any(|arg| arg.starts_with("token:secret-token"))
+        );
     }
 
     #[test]

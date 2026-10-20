@@ -1,21 +1,21 @@
+mod auth;
 mod cli;
+mod commands;
+mod download;
 mod error;
 mod install;
+mod java;
+mod json_server;
 mod launch;
 mod launch_manager;
-mod models;
-mod auth;
-mod yggdrasil;
-mod java;
-mod download;
-mod version;
 mod loader;
+mod models;
 mod output;
-mod commands;
-mod json_server;
-mod web_server;
 #[cfg(test)]
 mod test_http;
+mod version;
+mod web_server;
+mod yggdrasil;
 
 use anyhow::Result;
 use clap::Parser;
@@ -90,12 +90,9 @@ async fn main() -> Result<()> {
                     let version = runtime.version_string.as_deref().unwrap_or("unknown");
                     let arch = runtime.arch.as_deref().unwrap_or("unknown");
                     match runtime.version {
-                        Some(major) if version == major.to_string() => println!(
-                            "  Java {} ({}) - {}",
-                            major,
-                            arch,
-                            runtime.path.display()
-                        ),
+                        Some(major) if version == major.to_string() => {
+                            println!("  Java {} ({}) - {}", major, arch, runtime.path.display())
+                        }
                         Some(major) => println!(
                             "  Java {} ({}, {}) - {}",
                             major,
@@ -127,18 +124,16 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Login => {
-            match manager.login().await {
-                Ok(auth_cache) => {
-                    manager.save_auth_cache(&auth_cache)?;
-                    println!("Login successful! You can now launch with '--auth msa'.");
-                }
-                Err(e) => {
-                    eprintln!("Authentication failed: {}", e);
-                    std::process::exit(1);
-                }
+        Commands::Login => match manager.login().await {
+            Ok(auth_cache) => {
+                manager.save_auth_cache(&auth_cache)?;
+                println!("Login successful! You can now launch with '--auth msa'.");
             }
-        }
+            Err(e) => {
+                eprintln!("Authentication failed: {}", e);
+                std::process::exit(1);
+            }
+        },
         Commands::Launch {
             version,
             username,
@@ -179,8 +174,10 @@ async fn main() -> Result<()> {
             match manager.external_login(identifier, &password, api_url).await {
                 Ok(_) => {
                     println!("External login successful!");
-                    println!("You can now launch with: mclc launch --version <version> --auth external --api-url {} --username {}",
-                        api_url, identifier);
+                    println!(
+                        "You can now launch with: mclc launch --version <version> --auth external --api-url {} --username {}",
+                        api_url, identifier
+                    );
                 }
                 Err(e) => {
                     eprintln!("External authentication failed: {}", e);

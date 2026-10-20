@@ -191,7 +191,10 @@ async fn install_fabric_like(
 
     let version_dir = installer.versions_dir.join(&version_id);
     fs::create_dir_all(&version_dir)?;
-    fs::write(version_dir.join(format!("{}.json", version_id)), profile_json)?;
+    fs::write(
+        version_dir.join(format!("{}.json", version_id)),
+        profile_json,
+    )?;
 
     installer.install_loaded_version(&version_id).await?;
     Ok(version_id)
@@ -315,10 +318,7 @@ fn normalize_forge_version(game_version: &str, requested: &str) -> String {
     requested.to_string()
 }
 
-fn select_forge_version(
-    promos: &HashMap<String, String>,
-    game_version: &str,
-) -> Option<String> {
+fn select_forge_version(promos: &HashMap<String, String>, game_version: &str) -> Option<String> {
     let recommended = format!("{}-recommended", game_version);
     let latest = format!("{}-latest", game_version);
     promos
@@ -348,10 +348,7 @@ async fn install_neoforge(
                 )
                 .await?;
                 select_neoforge_legacy_version(&data.versions, game_version).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "No NeoForge version found for Minecraft {}",
-                        game_version
-                    )
+                    anyhow::anyhow!("No NeoForge version found for Minecraft {}", game_version)
                 })?
             }
         };
@@ -371,10 +368,7 @@ async fn install_neoforge(
                 )
                 .await?;
                 select_neoforge_version(&data.versions, game_version).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "No NeoForge version found for Minecraft {}",
-                        game_version
-                    )
+                    anyhow::anyhow!("No NeoForge version found for Minecraft {}", game_version)
                 })?
             }
         };
@@ -444,10 +438,7 @@ fn normalize_neoforge_legacy_version(game_version: &str, requested: &str) -> Str
     format!("{}-{}", game_version, requested)
 }
 
-fn select_neoforge_legacy_version(
-    versions: &[String],
-    game_version: &str,
-) -> Option<String> {
+fn select_neoforge_legacy_version(versions: &[String], game_version: &str) -> Option<String> {
     let prefix = format!("{}-47.", game_version);
     versions
         .iter()
@@ -476,20 +467,19 @@ async fn run_installer(
     game_version: &str,
     java_path_override: Option<String>,
 ) -> anyhow::Result<String> {
-    let sha1_text = download::fetch_text(
-        client,
-        &format!("{}.sha1", installer_url),
-        installer.source,
-    )
-    .await
-    .context("Failed to fetch the loader installer checksum")?;
+    let sha1_text =
+        download::fetch_text(client, &format!("{}.sha1", installer_url), installer.source)
+            .await
+            .context("Failed to fetch the loader installer checksum")?;
     let expected_sha1 = sha1_text
         .split_whitespace()
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
     if expected_sha1.len() != 40
-        || !expected_sha1.chars().all(|character| character.is_ascii_hexdigit())
+        || !expected_sha1
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
     {
         anyhow::bail!("Invalid installer SHA-1 for {}", installer_url);
     }
@@ -497,22 +487,12 @@ async fn run_installer(
     let temp_dir = tempfile::tempdir().context("Failed to create a temporary directory")?;
     let installer_path = temp_dir.path().join("installer.jar");
     let urls = download::url_candidates(installer_url, installer.source);
-    download::download_file(
-        client,
-        &urls,
-        &installer_path,
-        Some(&expected_sha1),
-        None,
-    )
-    .await?;
+    download::download_file(client, &urls, &installer_path, Some(&expected_sha1), None).await?;
 
     let version_id = read_embedded_version_id(&installer_path)?;
     let parent = crate::version::load_version_details(&installer.versions_dir, game_version)?;
     let java = crate::java::select_java(
-        parent
-            .java_version
-            .as_ref()
-            .map(|java| java.major_version),
+        parent.java_version.as_ref().map(|java| java.major_version),
         java_path_override,
     )?;
 
@@ -608,10 +588,7 @@ fn read_embedded_version_id(jar_path: &Path) -> anyhow::Result<String> {
     anyhow::bail!("Could not find a version id in {:?}", jar_path)
 }
 
-fn ensure_launcher_profiles(
-    game_dir: &Path,
-    game_version: &str,
-) -> anyhow::Result<()> {
+fn ensure_launcher_profiles(game_dir: &Path, game_version: &str) -> anyhow::Result<()> {
     let path = game_dir.join("launcher_profiles.json");
     if path.exists() {
         return Ok(());
@@ -834,8 +811,7 @@ mod tests {
         );
         assert_eq!(profile["libraries"].as_array().unwrap().len(), 4);
 
-        let details: crate::models::VersionDetails =
-            serde_json::from_value(profile).unwrap();
+        let details: crate::models::VersionDetails = serde_json::from_value(profile).unwrap();
         assert_eq!(details.id, "quilt-loader-0.20.0-beta.9-1.21.1");
         assert_eq!(details.inherits_from.as_deref(), Some("1.21.1"));
     }

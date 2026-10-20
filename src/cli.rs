@@ -54,13 +54,13 @@ pub enum Commands {
 
     /// Run the persistent JSON communication server
     #[command(
-        long_about = "Run a persistent NDJSON server for GUI integration. The launcher reads one JSON request per line from stdin and writes one JSON event per line to stdout. Commands: ping, shutdown, java.list, versions.list, install, launch, login, external_login, accounts.list. Events: ready, log, progress, device_code, profiles, result, error. Each request has a client-chosen \"id\"; results and errors echo it back so concurrent work can be correlated. Requests are processed sequentially."
+        long_about = "Run a persistent NDJSON server for GUI integration. The launcher reads one JSON request per line from stdin and writes one JSON event per line to stdout. Commands: ping, shutdown, java.list, versions.list, installed.list, install, launch, login, external_login, accounts.list. Events: ready, log, progress, device_code, profiles, result, error. Each request has a client-chosen \"id\"; results and errors echo it back so concurrent work can be correlated. Requests are processed sequentially."
     )]
     Json,
 
     /// Start the local web backend for a browser frontend
     #[command(
-        long_about = "Start a local HTTP/WebSocket bridge for a browser-based frontend. The same JSON request/event protocol as 'mclc json' is exposed at ws://HOST:PORT/ws; GET /health returns launcher status. The launcher subprocess is started automatically and uses the current working directory. The server binds to 127.0.0.1 by default. Browser origins on localhost, 127.0.0.1, and ::1 are allowed; use --allow-origin for other frontends. With --token, clients must pass ?token=... or an Authorization: Bearer header. A token is required when binding to a non-loopback address."
+        long_about = "Start a local HTTP/WebSocket bridge for a browser-based frontend. The same JSON request/event protocol as 'mclc json' is exposed at ws://HOST:PORT/ws; GET /health returns launcher status. The launcher subprocess is started automatically and uses the current working directory. The server binds to 127.0.0.1 by default. Browser origins on localhost, 127.0.0.1, and ::1 are allowed; use --allow-origin for other frontends. With --token, clients must pass ?token=... or an Authorization: Bearer header. A token is required when binding to a non-loopback address. The web backend does not serve frontend assets; host the frontend separately."
     )]
     Web {
         /// Port to listen on (0 chooses a free port)

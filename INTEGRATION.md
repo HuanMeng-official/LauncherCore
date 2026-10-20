@@ -234,6 +234,7 @@ Summary:
 | `shutdown` | none | `{"shutdown":true}` | Server exits after replying |
 | `java.list` | none | `{"runtimes":[...]}` | Scans the machine |
 | `versions.list` | none | `{"versions":[...]}` | Network request |
+| `installed.list` | none | `{"versions":[{"id":"..."}]}` | Reads the local versions directory |
 | `install` | object | `{"version_id":"..."}` | Downloads may take a long time |
 | `launch` | object | `{"launched":true,"version":"..."}` | Returns after spawning the game |
 | `login` | none | `{"username":"...","uuid":"..."}` | Blocks during the device-code flow |
@@ -558,6 +559,31 @@ Result:
 - `msa` is `null` when no Microsoft account cache exists or the cache cannot be read.
 - Access tokens are never included in this response.
 
+### 5.10 `installed.list`
+
+Returns version ids that have a readable `<id>/<id>.json` under the game's `versions` directory.
+This includes vanilla installations and loader profiles.
+
+Result:
+
+```json
+{
+  "type": "result",
+  "id": 10,
+  "ok": true,
+  "data": {
+    "versions": [
+      {"id": "1.21.1"},
+      {"id": "fabric-loader-0.19.5-1.21.1"}
+    ]
+  }
+}
+```
+
+- The list is sorted by id.
+- It reads the working directory fixed when the server started.
+- Use this for installed-version pickers; `versions.list` only contains remote manifest entries.
+
 ---
 
 ## 6. Events
@@ -766,8 +792,9 @@ Operational differences:
 - Multiple WebSocket clients can share one launcher. Requests are serialized globally; each
   outcome goes to the requesting connection. Uncorrelated events are broadcast with `id: null`.
 - Every new connection receives the current `ready` event. Events are not replayed; after
-  reconnecting, query `accounts.list`, `java.list`, and `versions.list` again. An in-flight
-  request continues after a disconnect, but its result is delivered only to an open connection.
+  reconnecting, query `accounts.list`, `java.list`, `installed.list`, and `versions.list` again.
+  An in-flight request continues after a disconnect, but its result is delivered only to an open
+  connection.
 - If the launcher subprocess exits, clients receive a web-specific `launcher_exit` event with
   `id: null`, and `/health` reports `launcher_alive: false`. Sending `shutdown` stops the launcher
   subprocess only; the web server remains available and does not restart it automatically.

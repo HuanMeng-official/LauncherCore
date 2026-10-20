@@ -168,7 +168,11 @@ impl LauncherManager {
         Ok(accounts)
     }
 
-    pub fn find_account_by_identifier(&self, identifier: &str, api_url: &str) -> anyhow::Result<Option<YggdrasilAccount>> {
+    pub fn find_account_by_identifier(
+        &self,
+        identifier: &str,
+        api_url: &str,
+    ) -> anyhow::Result<Option<YggdrasilAccount>> {
         let accounts = self.load_accounts()?;
         let normalized_url = normalize_api_url(api_url);
         for account in accounts {
@@ -222,10 +226,12 @@ impl LauncherManager {
 
         // Get server metadata
         let metadata = authenticator.get_api_metadata().await?;
-        let server_name = metadata.meta.as_ref()
-            .and_then(|m| m.server_name.clone());
+        let server_name = metadata.meta.as_ref().and_then(|m| m.server_name.clone());
 
-        crate::outln!("Connected to: {}", server_name.as_deref().unwrap_or(&resolved_url));
+        crate::outln!(
+            "Connected to: {}",
+            server_name.as_deref().unwrap_or(&resolved_url)
+        );
 
         // Authenticate
         let mut auth_response = authenticator.authenticate(identifier, password).await?;
@@ -276,7 +282,8 @@ impl LauncherManager {
 
         // Remove existing account with same identifier and API URL
         accounts.retain(|a| {
-            !(a.identifier == account.identifier && a.api_url.trim_end_matches('/') == normalized_url)
+            !(a.identifier == account.identifier
+                && a.api_url.trim_end_matches('/') == normalized_url)
         });
 
         accounts.push(account.clone());
@@ -313,18 +320,13 @@ impl LauncherManager {
         self.authenticator.perform_full_authentication().await
     }
 
-    pub async fn ensure_fresh_auth_cache(
-        &self,
-        cache: AuthCache,
-    ) -> anyhow::Result<AuthCache> {
+    pub async fn ensure_fresh_auth_cache(&self, cache: AuthCache) -> anyhow::Result<AuthCache> {
         if !cache_needs_refresh(&cache) {
             return Ok(cache);
         }
 
         let Some(refresh_token) = cache.refresh_token.clone() else {
-            anyhow::bail!(
-                "Microsoft authentication has expired. Please run 'mclc login' again."
-            );
+            anyhow::bail!("Microsoft authentication has expired. Please run 'mclc login' again.");
         };
 
         crate::outln!("Refreshing Microsoft authentication...");
@@ -435,7 +437,11 @@ mod tests {
 
         for path in [manager.get_auth_cache_path(), manager.get_accounts_path()] {
             let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "{:?} must not be readable by other users", path);
+            assert_eq!(
+                mode, 0o600,
+                "{:?} must not be readable by other users",
+                path
+            );
         }
     }
 
@@ -529,9 +535,11 @@ mod tests {
         assert!(requests[3].method == "POST");
         assert!(requests[3].path.ends_with("/authserver/refresh"));
         assert!(requests[3].body.contains("selectedProfile"));
-        assert!(requests[3]
-            .body
-            .contains("00112233445566778899aabbccddeeff"));
+        assert!(
+            requests[3]
+                .body
+                .contains("00112233445566778899aabbccddeeff")
+        );
     }
 
     #[tokio::test]
@@ -545,9 +553,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let manager = manager_with_config(temp.path().to_path_buf());
         let resolved_url = format!("{}/api/yggdrasil", server.base_url);
-        manager
-            .save_accounts(&[account(&resolved_url)])
-            .unwrap();
+        manager.save_accounts(&[account(&resolved_url)]).unwrap();
 
         let found = manager
             .find_account_by_identifier_resolved("alice", &server.base_url)

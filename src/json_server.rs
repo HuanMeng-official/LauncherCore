@@ -170,6 +170,12 @@ async fn dispatch(
             Ok(json!({ "versions": versions }))
         }
 
+        "installed.list" => {
+            let versions = manager.installer.list_installed_versions()?;
+            let versions: Vec<Value> = versions.into_iter().map(|id| json!({ "id": id })).collect();
+            Ok(json!({ "versions": versions }))
+        }
+
         "install" => {
             let params: InstallParams =
                 serde_json::from_value(params).context("Invalid install parameters")?;

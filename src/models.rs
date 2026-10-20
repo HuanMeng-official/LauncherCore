@@ -171,7 +171,10 @@ impl Library {
     /// Returns the library artifact, supporting both Mojang's `downloads`
     /// layout and the Maven-coordinate layout used by Fabric/Quilt.
     pub fn artifact(&self) -> Option<Artifact> {
-        if let Some(artifact) = self.downloads.as_ref().and_then(|downloads| downloads.artifact.clone())
+        if let Some(artifact) = self
+            .downloads
+            .as_ref()
+            .and_then(|downloads| downloads.artifact.clone())
         {
             return Some(artifact);
         }
@@ -286,10 +289,7 @@ fn maven_path(name: &str) -> Option<String> {
         None => format!("{}-{}.{}", artifact, version, extension),
     };
 
-    Some(format!(
-        "{}/{}/{}/{}",
-        group, artifact, version, file_name
-    ))
+    Some(format!("{}/{}/{}/{}", group, artifact, version, file_name))
 }
 
 use std::collections::HashMap;
@@ -607,10 +607,7 @@ mod tests {
         }
     }
 
-    fn library_with(
-        classifiers: Classifiers,
-        natives: Option<HashMap<String, String>>,
-    ) -> Library {
+    fn library_with(classifiers: Classifiers, natives: Option<HashMap<String, String>>) -> Library {
         Library {
             name: "test:lib:1.0".to_string(),
             downloads: Some(LibraryDownloads {
@@ -632,7 +629,10 @@ mod tests {
             natives_macos: Some(artifact("macos")),
             other: HashMap::from([
                 ("natives-linux-arm64".to_string(), artifact("linux-arm64")),
-                ("natives-windows-arm64".to_string(), artifact("windows-arm64")),
+                (
+                    "natives-windows-arm64".to_string(),
+                    artifact("windows-arm64"),
+                ),
                 ("natives-macos-arm64".to_string(), artifact("macos-arm64")),
                 ("natives-windows-x86".to_string(), artifact("windows-x86")),
             ]),
@@ -819,7 +819,10 @@ mod tests {
         let library = library_with(all_classifiers(), None);
 
         assert_eq!(
-            library.native_artifact_for("windows", "x86_64").unwrap().path,
+            library
+                .native_artifact_for("windows", "x86_64")
+                .unwrap()
+                .path,
             "windows.jar"
         );
         assert_eq!(
@@ -837,15 +840,24 @@ mod tests {
         let library = library_with(all_classifiers(), None);
 
         assert_eq!(
-            library.native_artifact_for("linux", "aarch64").unwrap().path,
+            library
+                .native_artifact_for("linux", "aarch64")
+                .unwrap()
+                .path,
             "linux-arm64.jar"
         );
         assert_eq!(
-            library.native_artifact_for("windows", "aarch64").unwrap().path,
+            library
+                .native_artifact_for("windows", "aarch64")
+                .unwrap()
+                .path,
             "windows-arm64.jar"
         );
         assert_eq!(
-            library.native_artifact_for("macos", "aarch64").unwrap().path,
+            library
+                .native_artifact_for("macos", "aarch64")
+                .unwrap()
+                .path,
             "macos-arm64.jar"
         );
     }

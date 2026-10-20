@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{stdout, Read, Write};
+use std::io::{Read, Write, stdout};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -15,7 +15,8 @@ use uuid::Uuid;
 pub use crate::models::YggdrasilProfile;
 
 const AUTHLIB_INJECTOR_API_BASE: &str = "https://authlib-injector.yushi.moe";
-const AUTHLIB_INJECTOR_API_MIRROR: &str = "https://bmclapi2.bangbang93.com/mirrors/authlib-injector";
+const AUTHLIB_INJECTOR_API_MIRROR: &str =
+    "https://bmclapi2.bangbang93.com/mirrors/authlib-injector";
 
 /// Returns the standard Java offline-mode UUID for a username.
 pub(crate) fn offline_uuid(username: &str) -> String {
@@ -183,7 +184,11 @@ impl YggdrasilAuthenticator {
                     error_resp.error_message
                 ));
             }
-            return Err(anyhow::anyhow!("Authentication failed: {} - {}", status, body));
+            return Err(anyhow::anyhow!(
+                "Authentication failed: {} - {}",
+                status,
+                body
+            ));
         }
 
         let response: YggdrasilAuthenticateResponse = res.json().await?;
@@ -231,7 +236,11 @@ impl YggdrasilAuthenticator {
                     error_resp.error_message
                 ));
             }
-            return Err(anyhow::anyhow!("Token refresh failed: {} - {}", status, body));
+            return Err(anyhow::anyhow!(
+                "Token refresh failed: {} - {}",
+                status,
+                body
+            ));
         }
 
         let response: YggdrasilAuthenticateResponse = res.json().await?;
@@ -297,9 +306,18 @@ impl YggdrasilAccount {
             profile
         };
 
-        let user_id = response.user.as_ref().context("User info not available")?.id.clone();
+        let user_id = response
+            .user
+            .as_ref()
+            .context("User info not available")?
+            .id
+            .clone();
         let user_properties_json = serde_json::to_string(
-            &response.user.as_ref().context("User info not available")?.properties,
+            &response
+                .user
+                .as_ref()
+                .context("User info not available")?
+                .properties,
         )?;
 
         Ok(Self {
@@ -321,12 +339,7 @@ impl YggdrasilAccount {
         identifier: String,
         response: YggdrasilAuthenticateResponse,
     ) -> anyhow::Result<Self> {
-        Self::from_auth_response_with_profile_selection(
-            api_url,
-            server_name,
-            identifier,
-            response,
-        )
+        Self::from_auth_response_with_profile_selection(api_url, server_name, identifier, response)
     }
 
     pub fn get_display_name(&self) -> String {
@@ -393,11 +406,7 @@ impl AuthlibInjector {
             .await
     }
 
-    async fn fetch_latest(
-        &self,
-        client: &Client,
-        api_base: &str,
-    ) -> anyhow::Result<AuthlibLatest> {
+    async fn fetch_latest(&self, client: &Client, api_base: &str) -> anyhow::Result<AuthlibLatest> {
         let api_url = format!("{}/artifact/latest.json", api_base.trim_end_matches('/'));
         let response = client.get(&api_url).send().await?.error_for_status()?;
         Ok(response.json::<AuthlibLatest>().await?)
@@ -539,9 +548,11 @@ mod tests {
     async fn downloads_authlib_injector_with_checksum() {
         let jar = b"authlib-injector-bytes";
         let jar_server = test_http::serve_once(test_http::response("200 OK", &[], jar)).await;
-        let api_server =
-            latest_json_server(&format!("{}/artifact.jar", jar_server.base_url), &sha256_hex(jar))
-                .await;
+        let api_server = latest_json_server(
+            &format!("{}/artifact.jar", jar_server.base_url),
+            &sha256_hex(jar),
+        )
+        .await;
         let temp = tempfile::tempdir().unwrap();
         let injector = AuthlibInjector::new(temp.path().to_path_buf());
 
@@ -577,9 +588,11 @@ mod tests {
     async fn replaces_a_corrupt_cached_jar() {
         let jar = b"correct-jar";
         let jar_server = test_http::serve_once(test_http::response("200 OK", &[], jar)).await;
-        let api_server =
-            latest_json_server(&format!("{}/artifact.jar", jar_server.base_url), &sha256_hex(jar))
-                .await;
+        let api_server = latest_json_server(
+            &format!("{}/artifact.jar", jar_server.base_url),
+            &sha256_hex(jar),
+        )
+        .await;
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("authlib-injector.jar"), b"truncated").unwrap();
         let injector = AuthlibInjector::new(temp.path().to_path_buf());

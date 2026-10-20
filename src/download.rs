@@ -213,10 +213,7 @@ async fn fetch_text_from_candidates(
     anyhow::bail!("All download attempts failed:\n{}", errors.join("\n"))
 }
 
-async fn fetch_text_once(
-    client: &reqwest::Client,
-    url: &str,
-) -> anyhow::Result<String> {
+async fn fetch_text_once(client: &reqwest::Client, url: &str) -> anyhow::Result<String> {
     let response = client.get(url).send().await?.error_for_status()?;
     Ok(response.text().await?)
 }
@@ -390,8 +387,7 @@ mod tests {
     #[test]
     fn maps_official_urls_to_bmclapi() {
         assert_eq!(
-            mirror_url("https://launchermeta.mojang.com/mc/game/version_manifest.json")
-                .as_deref(),
+            mirror_url("https://launchermeta.mojang.com/mc/game/version_manifest.json").as_deref(),
             Some("https://bmclapi2.bangbang93.com/mc/game/version_manifest.json")
         );
         assert_eq!(
@@ -399,10 +395,7 @@ mod tests {
             Some("https://bmclapi2.bangbang93.com/v1/packages/hash/1.21.1.json")
         );
         assert_eq!(
-            mirror_url(
-                "https://resources.download.minecraft.net/ab/abcdef"
-            )
-            .as_deref(),
+            mirror_url("https://resources.download.minecraft.net/ab/abcdef").as_deref(),
             Some("https://bmclapi2.bangbang93.com/assets/ab/abcdef")
         );
         assert_eq!(
@@ -481,9 +474,12 @@ mod tests {
     async fn falls_back_to_the_next_source() {
         let body = b"mirror-content";
         let expected_sha1 = sha1_hex(body);
-        let failing =
-            test_http::serve_once(test_http::response("500 Internal Server Error", &[], b"fail"))
-                .await;
+        let failing = test_http::serve_once(test_http::response(
+            "500 Internal Server Error",
+            &[],
+            b"fail",
+        ))
+        .await;
         let working = test_http::serve_once(test_http::response("200 OK", &[], body)).await;
         let dir = tempfile::tempdir().unwrap();
         let path = PathBuf::from(dir.path()).join("file.bin");

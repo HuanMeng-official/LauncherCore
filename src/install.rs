@@ -7,7 +7,10 @@ use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 const VERSION_MANIFEST_URL: &str = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
 const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net";
@@ -88,6 +91,31 @@ impl Installer {
         Ok(())
     }
 
+    /// Returns version ids with a readable `<id>/<id>.json` under the game's
+    /// versions directory. This includes vanilla and loader profiles.
+    pub fn list_installed_versions(&self) -> anyhow::Result<Vec<String>> {
+        let mut versions = Vec::new();
+        if !self.versions_dir.exists() {
+            return Ok(versions);
+        }
+
+        for entry in fs::read_dir(&self.versions_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if entry.path().join(format!("{}.json", id)).is_file() {
+                versions.push(id);
+            }
+        }
+
+        versions.sort();
+        Ok(versions)
+    }
+
     pub async fn install_version(&self, version_id: &str) -> anyhow::Result<()> {
         crate::outln!("Installing Minecraft version: {}", version_id);
         crate::outln!("Download source: {}", self.source.label());
@@ -109,8 +137,7 @@ impl Installer {
     /// Downloads all files required by an already-written version JSON,
     /// following `inheritsFrom` when present.
     pub async fn install_loaded_version(&self, version_id: &str) -> anyhow::Result<()> {
-        let version_details =
-            crate::version::load_version_details(&self.versions_dir, version_id)?;
+        let version_details = crate::version::load_version_details(&self.versions_dir, version_id)?;
         let version_dir = self.versions_dir.join(version_id);
         fs::create_dir_all(&version_dir)?;
 
@@ -148,7 +175,9 @@ impl Installer {
 
         // Asset index URL (always need to check this for assets)
         if let Some(asset_index) = &version_details.asset_index {
-            let index_path = self.assets_indexes_dir.join(format!("{}.json", asset_index.id));
+            let index_path = self
+                .assets_indexes_dir
+                .join(format!("{}.json", asset_index.id));
             asset_index_url = Some(asset_index.url.clone());
             asset_index_path = Some(index_path.clone());
             asset_index_sha1 = Some(asset_index.sha1.clone());
@@ -188,14 +217,8 @@ impl Installer {
                     tokio::spawn(async move {
                         (
                             task_type,
-                            download::download_file(
-                                &client,
-                                &urls,
-                                &path,
-                                sha1.as_deref(),
-                                size,
-                            )
-                            .await,
+                            download::download_file(&client, &urls, &path, sha1.as_deref(), size)
+                                .await,
                         )
                     })
                 })
@@ -220,11 +243,23 @@ impl Installer {
         let client = Client::new();
         let version_natives_dir = version_dir.join("natives");
         fs::create_dir_all(&version_natives_dir)?;
-        self.collect_library_download_tasks(&version_details, version_id, &version_natives_dir, &mut tasks, &mut extraction_tasks);
+        self.collect_library_download_tasks(
+            &version_details,
+            version_id,
+            &version_natives_dir,
+            &mut tasks,
+            &mut extraction_tasks,
+        );
 
         // ARM64 natives for Linux
         if std::env::consts::OS == "linux" && std::env::consts::ARCH == "aarch64" {
-            self.collect_lwjgl_arm64_download_tasks(&version_details, version_id, &version_natives_dir, &mut tasks, &mut extraction_tasks);
+            self.collect_lwjgl_arm64_download_tasks(
+                &version_details,
+                version_id,
+                &version_natives_dir,
+                &mut tasks,
+                &mut extraction_tasks,
+            );
         }
 
         // Assets (now index should exist)
@@ -255,12 +290,7 @@ impl Installer {
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
             .unwrap()
             .progress_chars("#>-"));
-        crate::output::progress(
-            "downloads",
-            0,
-            tasks.len() as u64,
-            "Downloading files",
-        );
+        crate::output::progress("downloads", 0, tasks.len() as u64, "Downloading files");
 
         // Download all files concurrently
         let client = Arc::new(client);
@@ -319,17 +349,15 @@ impl Installer {
         }
         ensure_downloads_succeeded(failures)?;
 
-        pb.finish_with_message(format!("Downloaded {} files", counter.load(Ordering::SeqCst)));
+        pb.finish_with_message(format!(
+            "Downloaded {} files",
+            counter.load(Ordering::SeqCst)
+        ));
 
         // Extract native libraries
         let total_extract = extraction_tasks.len() as u64;
         if total_extract > 0 {
-            crate::output::progress(
-                "extract",
-                0,
-                total_extract,
-                "Extracting native libraries",
-            );
+            crate::output::progress("extract", 0, total_extract, "Extracting native libraries");
         }
         for (index, (jar_path, extract_dir)) in extraction_tasks.into_iter().enumerate() {
             if jar_path.exists() {
@@ -519,26 +547,43 @@ impl Installer {
         Ok(())
     }
 
-    fn extract_lwjgl3_native_library(&self, jar_path: &Path, extract_dir: &Path) -> anyhow::Result<()> {
+    fn extract_lwjgl3_native_library(
+        &self,
+        jar_path: &Path,
+        extract_dir: &Path,
+    ) -> anyhow::Result<()> {
         let file = std::fs::File::open(jar_path)
             .with_context(|| format!("Failed to open native JAR file: {:?}", jar_path))?;
         let mut archive = zip::ZipArchive::new(file)
             .with_context(|| format!("Failed to read ZIP archive: {:?}", jar_path))?;
 
         for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .with_context(|| format!("Failed to get file entry {} from archive: {:?}", i, jar_path))?;
-            let outpath = extract_dir.join(
-                file.mangled_name()
-                    .with_context(|| format!("Failed to get entry name {} from archive: {:?}", i, jar_path))?,
-            );
+            let mut file = archive.by_index(i).with_context(|| {
+                format!(
+                    "Failed to get file entry {} from archive: {:?}",
+                    i, jar_path
+                )
+            })?;
+            let outpath = extract_dir.join(file.mangled_name().with_context(|| {
+                format!(
+                    "Failed to get entry name {} from archive: {:?}",
+                    i, jar_path
+                )
+            })?);
             let file_name = file
                 .name()
-                .with_context(|| format!("Failed to get entry name {} from archive: {:?}", i, jar_path))?
+                .with_context(|| {
+                    format!(
+                        "Failed to get entry name {} from archive: {:?}",
+                        i, jar_path
+                    )
+                })?
                 .to_lowercase();
 
-            if file_name.ends_with(".dll") || file_name.ends_with(".so") || file_name.ends_with(".dylib") {
+            if file_name.ends_with(".dll")
+                || file_name.ends_with(".so")
+                || file_name.ends_with(".dylib")
+            {
                 if let Some(p) = outpath.parent() {
                     if !p.exists() {
                         fs::create_dir_all(p).with_context(|| {
@@ -546,8 +591,9 @@ impl Installer {
                         })?;
                     }
                 }
-                let mut outfile = std::fs::File::create(&outpath)
-                    .with_context(|| format!("Failed to create output file for native: {:?}", outpath))?;
+                let mut outfile = std::fs::File::create(&outpath).with_context(|| {
+                    format!("Failed to create output file for native: {:?}", outpath)
+                })?;
                 std::io::copy(&mut file, &mut outfile)
                     .with_context(|| format!("Failed to write native file: {:?}", outpath))?;
             }
@@ -581,6 +627,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn lists_only_versions_with_readable_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let installer = test_installer(dir.path());
+        fs::create_dir_all(installer.versions_dir.join("1.21.1")).unwrap();
+        fs::write(installer.versions_dir.join("1.21.1/1.21.1.json"), "{}").unwrap();
+        fs::create_dir_all(installer.versions_dir.join("empty")).unwrap();
+        fs::write(installer.versions_dir.join("stray-file"), "x").unwrap();
+
+        let versions = installer.list_installed_versions().unwrap();
+        assert_eq!(versions, vec!["1.21.1".to_string()]);
+    }
+
     async fn download_one(
         client: &Client,
         url: &str,
@@ -600,12 +659,8 @@ mod tests {
 
     #[tokio::test]
     async fn download_rejects_http_error_and_leaves_no_file() {
-        let server = test_http::serve_once(test_http::response(
-            "404 Not Found",
-            &[],
-            b"not found",
-        ))
-        .await;
+        let server =
+            test_http::serve_once(test_http::response("404 Not Found", &[], b"not found")).await;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("client.jar");
         let client = Client::new();
@@ -620,14 +675,16 @@ mod tests {
         .await;
 
         assert!(result.is_err(), "HTTP 404 must not be treated as success");
-        assert!(!path.exists(), "error body must not be written to the final path");
+        assert!(
+            !path.exists(),
+            "error body must not be written to the final path"
+        );
     }
 
     #[tokio::test]
     async fn download_rejects_checksum_mismatch_and_leaves_no_file() {
         let body = b"hello";
-        let server =
-            test_http::serve_once(test_http::response("200 OK", &[], body)).await;
+        let server = test_http::serve_once(test_http::response("200 OK", &[], body)).await;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.jar");
         let client = Client::new();
@@ -649,8 +706,7 @@ mod tests {
     async fn download_writes_verified_file() {
         let body = b"hello";
         let expected_sha1 = sha1_hex(body);
-        let server =
-            test_http::serve_once(test_http::response("200 OK", &[], body)).await;
+        let server = test_http::serve_once(test_http::response("200 OK", &[], body)).await;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("asset.bin");
         let client = Client::new();
@@ -672,8 +728,7 @@ mod tests {
     async fn download_replaces_truncated_existing_file() {
         let body = b"hello";
         let expected_sha1 = sha1_hex(body);
-        let server =
-            test_http::serve_once(test_http::response("200 OK", &[], body)).await;
+        let server = test_http::serve_once(test_http::response("200 OK", &[], body)).await;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("asset.bin");
         fs::write(&path, b"hel").unwrap();
@@ -779,7 +834,11 @@ mod tests {
         ])
         .unwrap_err();
 
-        assert!(error.to_string().contains("https://example.invalid/lib.jar"));
+        assert!(
+            error
+                .to_string()
+                .contains("https://example.invalid/lib.jar")
+        );
         assert!(ensure_downloads_succeeded(Vec::new()).is_ok());
     }
 
@@ -883,14 +942,20 @@ mod tests {
             installer.libraries_dir.join(&expected_native.path)
         );
         assert_eq!(
-            tasks.iter().filter(|task| task.task_type == "native").count(),
+            tasks
+                .iter()
+                .filter(|task| task.task_type == "native")
+                .count(),
             1,
             "only the current platform's native may be downloaded"
         );
 
         let expected_library_tasks = 1 + usize::from(cfg!(target_os = "linux"));
         assert_eq!(
-            tasks.iter().filter(|task| task.task_type == "library").count(),
+            tasks
+                .iter()
+                .filter(|task| task.task_type == "library")
+                .count(),
             expected_library_tasks,
             "libraries disallowed by rules must not be downloaded"
         );
