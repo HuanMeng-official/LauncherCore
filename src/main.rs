@@ -6,6 +6,8 @@ mod launch_manager;
 mod models;
 mod auth;
 mod yggdrasil;
+#[cfg(test)]
+mod test_http;
 
 use anyhow::Result;
 use clap::Parser;
@@ -96,7 +98,10 @@ async fn main() -> Result<()> {
                 };
 
                 // Try to find existing account
-                if let Some(account) = manager.find_account_by_identifier(&username, api_url)? {
+                if let Some(account) = manager
+                    .find_account_by_identifier_resolved(&username, api_url)
+                    .await?
+                {
                     let authenticator = YggdrasilAuthenticator::new(account.api_url.clone());
 
                     // Validate the token, if expired try to refresh

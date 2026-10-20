@@ -6,6 +6,14 @@ use crate::yggdrasil::{AuthlibInjector, YggdrasilAccount, YggdrasilAuthenticator
 use std::fs;
 use std::path::PathBuf;
 
+fn normalize_api_url(url: &str) -> String {
+    let mut url = url.trim().trim_end_matches('/').to_string();
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        url = format!("https://{}", url);
+    }
+    url
+}
+
 #[derive(Debug)]
 pub struct LauncherManager {
     pub launcher: Launcher,
@@ -113,13 +121,28 @@ impl LauncherManager {
 
     pub fn find_account_by_identifier(&self, identifier: &str, api_url: &str) -> anyhow::Result<Option<YggdrasilAccount>> {
         let accounts = self.load_accounts()?;
-        let normalized_url = api_url.trim_end_matches('/');
+        let normalized_url = normalize_api_url(api_url);
         for account in accounts {
-            if account.identifier == identifier && account.api_url.trim_end_matches('/') == normalized_url {
+            if account.identifier == identifier
+                && normalize_api_url(&account.api_url) == normalized_url
+            {
                 return Ok(Some(account));
             }
         }
         Ok(None)
+    }
+
+    /// Resolve the user-supplied API URL the same way `external_login` does
+    /// before looking up a stored account.
+    pub async fn find_account_by_identifier_resolved(
+        &self,
+        identifier: &str,
+        api_url: &str,
+    ) -> anyhow::Result<Option<YggdrasilAccount>> {
+        let resolved_url = YggdrasilAuthenticator::resolve_api_url(api_url)
+            .await
+            .unwrap_or_else(|_| normalize_api_url(api_url));
+        self.find_account_by_identifier(identifier, &resolved_url)
     }
 
     pub async fn external_login(
@@ -217,5 +240,69 @@ impl LauncherManager {
 impl Default for LauncherManager {
     fn default() -> Self {
         Self::new().expect("Failed to initialize LauncherManager")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_http;
+
+    fn manager_with_config(config_dir: PathBuf) -> LauncherManager {
+        let minecraft_dir = config_dir.join(".minecraft");
+        LauncherManager {
+            launcher: Launcher {
+                minecraft_dir: minecraft_dir.clone(),
+                versions_dir: minecraft_dir.join("versions"),
+                libraries_dir: minecraft_dir.join("libraries"),
+                assets_dir: minecraft_dir.join("assets"),
+            },
+            installer: Installer {
+                versions_dir: minecraft_dir.join("versions"),
+                libraries_dir: minecraft_dir.join("libraries"),
+                assets_objects_dir: minecraft_dir.join("assets/objects"),
+                assets_indexes_dir: minecraft_dir.join("assets/indexes"),
+            },
+            authenticator: Authenticator::default(),
+            config_dir,
+        }
+    }
+
+    fn account(api_url: &str) -> YggdrasilAccount {
+        YggdrasilAccount {
+            api_url: api_url.to_string(),
+            server_name: None,
+            identifier: "alice".to_string(),
+            uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+            name: "Alice".to_string(),
+            access_token: "access".to_string(),
+            client_token: "client".to_string(),
+            user_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            user_properties: "{}".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn finds_account_using_ali_resolved_url() {
+        let server = test_http::serve_once(test_http::response(
+            "200 OK",
+            &[("X-Authlib-Injector-API-Location", "/api/yggdrasil")],
+            b"",
+        ))
+        .await;
+        let temp = tempfile::tempdir().unwrap();
+        let manager = manager_with_config(temp.path().to_path_buf());
+        let resolved_url = format!("{}/api/yggdrasil", server.base_url);
+        manager
+            .save_accounts(&[account(&resolved_url)])
+            .unwrap();
+
+        let found = manager
+            .find_account_by_identifier_resolved("alice", &server.base_url)
+            .await
+            .unwrap();
+
+        let found = found.expect("account must be found after ALI resolution");
+        assert_eq!(found.api_url, resolved_url);
     }
 }
