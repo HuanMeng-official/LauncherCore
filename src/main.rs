@@ -6,6 +6,7 @@ mod launch_manager;
 mod models;
 mod auth;
 mod yggdrasil;
+mod java;
 #[cfg(test)]
 mod test_http;
 
@@ -49,6 +50,45 @@ async fn main() -> Result<()> {
     match &cli.command {
         Commands::List => {
             manager.list_versions().await?;
+        }
+        Commands::Java => {
+            let mut runtimes = java::detect_java_runtimes();
+            if runtimes.is_empty() {
+                println!("No Java runtime found.");
+            } else {
+                runtimes.sort_by(|left, right| {
+                    right
+                        .version
+                        .cmp(&left.version)
+                        .then_with(|| left.path.cmp(&right.path))
+                });
+                println!("Detected {} Java runtime(s):", runtimes.len());
+                for runtime in &runtimes {
+                    let version = runtime.version_string.as_deref().unwrap_or("unknown");
+                    let arch = runtime.arch.as_deref().unwrap_or("unknown");
+                    match runtime.version {
+                        Some(major) if version == major.to_string() => println!(
+                            "  Java {} ({}) - {}",
+                            major,
+                            arch,
+                            runtime.path.display()
+                        ),
+                        Some(major) => println!(
+                            "  Java {} ({}, {}) - {}",
+                            major,
+                            version,
+                            arch,
+                            runtime.path.display()
+                        ),
+                        None => println!(
+                            "  Java ? ({}, {}) - {}",
+                            version,
+                            arch,
+                            runtime.path.display()
+                        ),
+                    }
+                }
+            }
         }
         Commands::Install { version } => {
             manager.install_version(&version).await?;

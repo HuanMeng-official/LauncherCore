@@ -17,7 +17,7 @@
 - **多线程下载**：支持并发下载，加速安装过程（最多 16 个并行下载）
 - **进度可视化**：下载过程中实时显示进度条
 - **跨平台支持**：支持 Windows、Linux 和 macOS
-- **灵活配置**：可通过命令行参数或 `JAVA_HOME` 环境变量指定 Java 运行时
+- **Java 运行时检测**：扫描 `JAVA_HOME`、`PATH` 和常见安装目录，自动选择目标 Minecraft 版本要求的大版本；可用 `--runtime` 覆盖
 - **原生库管理**：应用版本规则，只下载并解压当前系统和架构对应的原生库
 - **版本参数驱动**：读取版本 manifest 的 `arguments`（含系统/架构规则），并为旧版本回退到 `minecraftArguments`
 - **认证支持**：支持离线、微软账户和外置 Yggdrasil（authlib-injector）认证
@@ -33,7 +33,7 @@
 ## 环境要求
 
 - 构建需要 Rust 1.88 或更高版本（edition 2024；已在 1.99.1 上测试）
-- 需要与目标 Minecraft 版本兼容的 Java 运行时，可通过 `JAVA_HOME` 或 `--runtime` 指定
+- 需要与目标 Minecraft 版本兼容的 Java 运行时。启动器会从 `JAVA_HOME`、`PATH` 和常见安装目录自动检测，也可用 `--runtime` 覆盖。不同 Minecraft 版本可能需要 Java 8、16、17 或 21。
 
 ## 构建
 
@@ -56,6 +56,7 @@ mclc <命令> [选项]
 | 命令 | 描述 |
 |------|------|
 | **list** | 列出所有可用的 Minecraft 版本 |
+| **java** | 列出检测到的 Java 运行时 |
 | **install <版本>** | 安装指定的 Minecraft 版本 |
 | **launch <版本>** | 启动指定的 Minecraft 版本 |
 | **login** | 登录到微软账户 |
@@ -66,7 +67,7 @@ mclc <命令> [选项]
 
 | 选项 | 描述 |
 |------|------|
-| `-r, --runtime <路径>` | 指定 Java 运行时路径 |
+| `-r, --runtime <路径>` | 覆盖自动 Java 检测 |
 
 ### 启动选项
 
@@ -78,7 +79,7 @@ mclc <命令> [选项]
 | `--auth <类型>` | 认证类型：`offline`（默认）、`msa` 或 `external` |
 | `--api-url <地址>` | Yggdrasil API 地址（外置登录） |
 | `--authlib-jar <路径>` | 使用本地的 authlib-injector.jar，跳过自动下载 |
-| `-r, --runtime <路径>` | 指定 Java 运行时路径 |
+| `-r, --runtime <路径>` | 覆盖自动 Java 检测 |
 
 ### 外置登录选项
 
@@ -146,6 +147,7 @@ mclc list
    - 将原生库提取到版本独立目录
    - 使用并发下载并显示进度
 3. **启动过程**：
+   - 按版本的 `javaVersion.majorVersion` 选择 Java（或使用 `--runtime`）
    - 组装完整的类路径
    - 配置原生库路径
    - 解析版本 manifest 的 JVM 和游戏参数，包括系统/架构规则与占位符
@@ -186,6 +188,7 @@ LauncherCore/
 │   ├── install.rs        # 安装逻辑和下载
 │   ├── launch.rs         # 启动参数组装和执行
 │   ├── launch_manager.rs # 启动配置和账号存储
+│   ├── java.rs           # Java 运行时检测和选择
 │   ├── auth.rs           # 微软账户认证
 │   ├── yggdrasil.rs      # 外置 Yggdrasil 认证和 authlib-injector
 │   ├── models.rs         # 数据模型和 JSON 结构
@@ -249,7 +252,7 @@ LauncherCore/
 
 ### 找不到 Java？
 
-设置 `JAVA_HOME` 环境变量或使用 `--runtime` 显式指定 Java 路径：
+先运行 `mclc java` 查看检测到的 Java 运行时。安装目标 Minecraft 版本所需的大版本，或显式指定路径：
 
 ```bash
 mclc launch 1.21.3 --username 玩家名 --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"

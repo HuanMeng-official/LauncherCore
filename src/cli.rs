@@ -20,7 +20,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Specify Java runtime path
+    /// Override automatic Java detection
     #[arg(long = "runtime", short = 'r', value_name = "PATH", global = true)]
     pub java_runtime_path: Option<String>,
 }
@@ -30,6 +30,10 @@ pub enum Commands {
     /// List all available Minecraft versions
     #[command(long_about = "Show official version list, including version type (release/snapshot/etc)")]
     List,
+
+    /// List detected Java runtimes
+    #[command(long_about = "Scan JAVA_HOME, PATH, and common install directories for Java runtimes")]
+    Java,
 
     /// Install specified Minecraft version
     #[command(long_about = "Download all necessary files for the specified version, including client JAR, library files, and asset files")]

@@ -17,7 +17,7 @@
 - **Concurrent Downloads**: Concurrent downloading for faster installation (up to 16 parallel downloads)
 - **Progress Visualization**: Real-time progress bar during downloads
 - **Cross-Platform**: Supports Windows, Linux, and macOS
-- **Flexible Java Configuration**: Specify Java runtime via command line or `JAVA_HOME` environment variable
+- **Java Runtime Detection**: Scans `JAVA_HOME`, `PATH`, and common install directories, then selects the Java major version required by the target Minecraft version; `--runtime` overrides the choice
 - **Native Library Management**: Applies version rules and downloads/extracts only the natives for the current OS and architecture
 - **Manifest-Driven Arguments**: Uses each version's `arguments` (with OS/architecture rules) and falls back to legacy `minecraftArguments`
 - **Authentication Support**: Offline, Microsoft account, and external Yggdrasil (authlib-injector) authentication
@@ -33,7 +33,7 @@
 ## Requirements
 
 - Rust 1.88 or newer to build (edition 2024; tested with 1.99.1)
-- A Java runtime compatible with the target Minecraft version, configured through `JAVA_HOME` or `--runtime`
+- A Java runtime compatible with the target Minecraft version. Java is detected automatically from `JAVA_HOME`, `PATH`, and common install directories; use `--runtime` to override. Depending on the Minecraft version, Java 8, 16, 17, or 21 may be required.
 
 ## Building
 
@@ -56,6 +56,7 @@ mclc <COMMAND> [OPTIONS]
 | Command | Description |
 |---------|-------------|
 | **list** | List all available Minecraft versions |
+| **java** | List detected Java runtimes |
 | **install <VERSION>** | Install a specific Minecraft version |
 | **launch <VERSION>** | Launch a Minecraft version |
 | **login** | Login to a Microsoft account |
@@ -66,7 +67,7 @@ mclc <COMMAND> [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-r, --runtime <PATH>` | Specify Java runtime path |
+| `-r, --runtime <PATH>` | Override automatic Java detection |
 
 ### Launch Options
 
@@ -78,7 +79,7 @@ mclc <COMMAND> [OPTIONS]
 | `--auth <TYPE>` | Authentication type: `offline` (default), `msa`, or `external` |
 | `--api-url <URL>` | Yggdrasil API URL (external auth) |
 | `--authlib-jar <PATH>` | Use a local authlib-injector.jar instead of downloading one |
-| `-r, --runtime <PATH>` | Specify Java runtime path |
+| `-r, --runtime <PATH>` | Override automatic Java detection |
 
 ### External Login Options
 
@@ -146,6 +147,7 @@ mclc list
    - Extracts native libraries to version-specific directories
    - Uses concurrent downloading with progress tracking
 3. **Launch Process**:
+   - Selects a Java runtime matching the version's `javaVersion.majorVersion` (or uses `--runtime`)
    - Assembles the complete classpath
    - Configures native library paths
    - Evaluates the version manifest's JVM and game arguments, including OS/architecture rules and placeholders
@@ -186,6 +188,7 @@ LauncherCore/
 │   ├── install.rs        # Installation logic and downloads
 │   ├── launch.rs         # Launch argument assembly and execution
 │   ├── launch_manager.rs # Launcher configuration and account storage
+│   ├── java.rs           # Java runtime detection and selection
 │   ├── auth.rs           # Microsoft account authentication
 │   ├── yggdrasil.rs      # External Yggdrasil auth and authlib-injector
 │   ├── models.rs         # Data models and JSON structures
@@ -249,7 +252,7 @@ Inside the game directory:
 
 ### Java not found?
 
-Set the `JAVA_HOME` environment variable or use `--runtime` to specify the Java path explicitly:
+Run `mclc java` to see which Java runtimes were detected. Install the Java major version required by your Minecraft version, or specify the path explicitly:
 
 ```bash
 mclc launch 1.21.3 --username Player --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"

@@ -1,3 +1,4 @@
+use crate::java::select_java;
 use crate::models::VersionDetails;
 use anyhow::Context;
 use std::fs;
@@ -332,12 +333,11 @@ impl Launcher {
         let version_json = fs::read_to_string(&version_json_path)?;
         let version_details: VersionDetails = serde_json::from_str(&version_json)?;
 
-        let java_path = if let Some(override_path) = java_path_override {
-            println!("Using explicitly provided Java path: {}", override_path);
-            PathBuf::from(override_path)
-        } else {
-            self.find_java_from_env()?
-        };
+        let required_java = version_details
+            .java_version
+            .as_ref()
+            .map(|java| java.major_version);
+        let java_path = select_java(required_java, java_path_override)?;
 
         println!("Using Java: {:?}", java_path);
 
@@ -564,32 +564,6 @@ impl Launcher {
             .join(if cfg!(windows) { ";" } else { ":" }))
     }
 
-    fn find_java_from_env(
-        &self
-    ) -> anyhow::Result<PathBuf> {
-        if let Ok(java_home) = std::env::var("JAVA_HOME") {
-            let java_home_path = PathBuf::from(java_home);
-            let java_bin = java_home_path.join("bin").join(if cfg!(target_os = "windows") {
-                "java.exe"
-            } else {
-                "java"
-            });
-
-            if java_bin.exists() {
-                println!("Found Java in JAVA_HOME: {:?}", java_home_path);
-                return Ok(java_bin);
-            } else {
-                eprintln!(
-                    "JAVA_HOME is set to '{:?}' but Java executable not found at '{:?}'",
-                    java_home_path, java_bin
-                );
-            }
-        } else {
-            eprintln!("JAVA_HOME environment variable is not set.");
-        }
-
-        Err(anyhow::anyhow!("Java not found. Please set JAVA_HOME or use --runtime"))
-    }
 }
 
 #[cfg(test)]
