@@ -2,7 +2,7 @@
 
 **协议版本：** 1  
 **读者：** GUI 启动器、安装器前端、自动化工具以及其他集成 LauncherCore 的客户端  
-**适用命令：** `mclc json`
+**适用命令：** `mclc json` 以及 `mclc web` WebSocket 传输
 
 本文说明 `mclc json` 提供的常驻 NDJSON 协议，以及如何围绕它编写客户端。文档与具体 GUI 框架无关：任何能够启动子进程并读写管道的运行时都可以接入。命令行用法见
 [README_zh_CN.md](README_zh_CN.md)，实现位于 [../src/json_server.rs](../src/json_server.rs) 和
@@ -690,6 +690,26 @@ function onChildExit():
 | Rust 原生（egui、iced） | 使用 `tokio::process::Command` 或 `std::process::Command`，独立读取任务，通过事件通道送入 UI。 |
 
 无论使用哪种框架，都要把子进程管理放在 UI 线程之外，并且不要在请求执行期间阻塞 UI。
+
+### 7.5 WebSocket 传输（`mclc web`）
+
+如果前端是浏览器页面而不是桌面进程，`mclc web` 提供了本地传输适配层。它会启动一个 HTTP 服务（默认绑定回环地址），在内部启动 `mclc json`，并在以下地址暴露相同的消息：
+
+- 默认 WebSocket 地址：`ws://127.0.0.1:7420/ws`
+- `GET /health` 查询启动器状态
+
+浏览器发送相同的请求对象，接收相同的结果、错误和事件。变化只在传输层，命令语义不变。
+
+运行差异：
+
+- 请求 ID 会在桥接层内部重映射；返回给浏览器时，会恢复成该连接自己的 ID。
+- 多个 WebSocket 客户端可以共用一个启动器。请求全局串行，结果只发给发起请求的连接；无法关联的事件会以 `id: null` 广播。
+- 每个新连接都会收到当前的 `ready` 事件。事件不会重放；重连后应重新查询 `accounts.list`、`java.list` 和 `versions.list`。请求在执行中断开后仍会继续，但结果只会发送给仍然打开的连接。
+- 启动器子进程退出时，客户端会收到 Web 专用的 `launcher_exit` 事件（`id: null`），并且 `/health` 会返回 `launcher_alive: false`。发送 `shutdown` 只会停止启动器子进程，Web 服务仍可用，并且不会自动重启子进程。
+- `mclc web` 不提供前端静态文件。前端需要单独部署；localhost 上的 Vite 开发服务器无需额外参数即可连接。直接用 `file://` 打开的页面会发送 `Origin: null`，仅在可信的本地开发场景下用 `--allow-origin null` 显式允许。
+- 启动器子进程继承 `mclc web` 的工作目录，因此应从游戏根目录启动。`--runtime` 和 `--download-source` 会转发给子进程。
+- 安全：服务默认绑定回环地址，允许回环 Origin；`--allow-origin` 追加其他来源；`--token` 要求客户端通过 `?token=` 或 `Authorization: Bearer` 提供令牌，绑定非回环地址时必须设置令牌。回环绑定时会校验 Host。不要绑定 `0.0.0.0`。
+- 公网 HTTPS 前端连接回环服务时，可能被浏览器的私有网络访问或混合内容策略拦截；仅设置 `--allow-origin` 并不能保证一定可用。
 
 ---
 

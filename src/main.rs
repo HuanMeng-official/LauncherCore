@@ -13,6 +13,7 @@ mod loader;
 mod output;
 mod commands;
 mod json_server;
+mod web_server;
 #[cfg(test)]
 mod test_http;
 
@@ -51,6 +52,24 @@ async fn main() -> Result<()> {
     match &cli.command {
         Commands::Json => {
             json_server::run(manager, global_java_path).await?;
+        }
+        Commands::Web {
+            port,
+            host,
+            token,
+            allow_origins,
+        } => {
+            web_server::run(
+                web_server::WebOptions {
+                    host: host.clone(),
+                    port: *port,
+                    token: token.clone(),
+                    allow_origins: allow_origins.clone(),
+                },
+                cli.download_source,
+                global_java_path,
+            )
+            .await?;
         }
         Commands::List => {
             manager.list_versions().await?;

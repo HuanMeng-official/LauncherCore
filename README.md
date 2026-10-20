@@ -26,6 +26,7 @@
 - **Credential Protection**: Access tokens are redacted from launch logs; on Unix, credential files are written with `0600` permissions
 - **Custom JVM Arguments**: Pass custom JVM arguments for performance tuning
 - **JSON Communication Mode**: A persistent NDJSON server exposes install, launch, login, and account operations for GUI frontends
+- **Web Frontend Backend**: `mclc web` exposes the same protocol over a local WebSocket with Origin and optional token checks
 - **Cross-Platform**: Supports Windows, Linux, and macOS, including Linux ARM64 native handling
 - **Detailed Error Handling**: Comprehensive error messages at every step using anyhow/thiserror
 
@@ -62,6 +63,7 @@ mclc <COMMAND> [OPTIONS]
 | **login** | Login to a Microsoft account |
 | **external-login <IDENTIFIER>** | Login to an external Yggdrasil server (authlib-injector) |
 | **json** | Start the persistent NDJSON server for GUI integration |
+| **web** | Start a local WebSocket backend for a browser frontend |
 | **help** | Display help information |
 
 ### Global Options
@@ -235,6 +237,24 @@ Notes:
 - Passwords are only accepted as request parameters in JSON mode; they are never read from the terminal.
 - The global `--runtime` and `--download-source` options provide defaults that requests can override.
 
+### Web Backend for Browser Frontends
+
+`mclc web` exposes the same JSON protocol over a local WebSocket so a separately hosted browser frontend can drive the launcher. It starts an internal `mclc json` process; it does not serve frontend assets.
+
+```bash
+mclc web
+mclc web --port 7420 --token <token>
+```
+
+- WebSocket endpoint: `ws://127.0.0.1:7420/ws`
+- Health endpoint: `http://127.0.0.1:7420/health`
+- The server binds to `127.0.0.1` by default (`--host` changes the address). Loopback origins such as `http://localhost:5173` are allowed; add `--allow-origin <ORIGIN>` for other frontends.
+- With `--token`, connect to `ws://127.0.0.1:7420/ws?token=<token>`, or pass `Authorization: Bearer <token>` from a non-browser client.
+- Requests, results, and events keep the shapes documented above. The bridge remaps request ids internally so multiple browser tabs can share one launcher; requests are still processed sequentially.
+- New WebSocket clients receive the current `ready` event. Events are not replayed, so re-query `accounts.list`, `java.list`, and `versions.list` after reconnecting.
+- Run `mclc web` from the desired game root; `.minecraft` is created there. Global `--runtime` and `--download-source` options are passed to the launcher subprocess.
+- Do not bind to `0.0.0.0` unless you understand the risk. A non-loopback bind requires `--token`; also provide explicit `--allow-origin` values for the frontend.
+
 ## How It Works
 
 ### Version Discovery and Installation
@@ -322,6 +342,7 @@ LauncherCore/
 │   ├── commands.rs       # Shared install and launch command logic
 │   ├── output.rs         # Human/JSON output abstraction
 │   ├── json_server.rs    # Persistent NDJSON communication server
+│   ├── web_server.rs     # Local WebSocket backend for browser frontends
 │   ├── install.rs        # Version installation and file downloads
 │   ├── download.rs       # Download sources, URL mapping, and retry logic
 │   ├── version.rs        # Version JSON inheritance and merging
@@ -348,6 +369,7 @@ LauncherCore/
 - `clap` - CLI argument parsing
 - `tokio` - Async runtime
 - `reqwest` - HTTP client with streaming and form support
+- `axum` - Local HTTP and WebSocket server for browser frontends
 - `serde` / `serde_json` - JSON serialization/deserialization
 - `anyhow` - Convenient error handling
 - `thiserror` - Error derive macros

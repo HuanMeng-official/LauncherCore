@@ -26,6 +26,7 @@
 - **凭据保护**：启动日志会隐藏访问令牌；Unix 下凭据文件使用 `0600` 权限
 - **自定义 JVM 参数**：支持传入自定义 JVM 参数进行性能调优
 - **JSON 通信模式**：常驻 NDJSON 服务向 GUI 前端提供安装、启动、登录和账号操作
+- **网页前端后端**：`mclc web` 通过本地 WebSocket 提供同一套协议，并带 Origin 与可选令牌校验
 - **跨平台支持**：支持 Windows、Linux 和 macOS，包括 Linux ARM64 原生库处理
 - **详细错误处理**：使用 anyhow/thiserror 提供每一步的完整错误信息
 
@@ -62,6 +63,7 @@ mclc <命令> [选项]
 | **login** | 登录到微软账户 |
 | **external-login <账号>** | 登录到外置 Yggdrasil 服务器（authlib-injector） |
 | **json** | 启动面向 GUI 集成的常驻 NDJSON 服务 |
+| **web** | 启动面向浏览器前端的本地 WebSocket 后端 |
 | **help** | 显示帮助信息 |
 
 ### 全局选项
@@ -235,6 +237,24 @@ mclc json
 - JSON 模式只接受请求参数中的密码，不会从终端读取。
 - 全局 `--runtime` 和 `--download-source` 选项提供默认值，请求参数可以覆盖它们。
 
+### 面向浏览器前端的 Web 后端
+
+`mclc web` 通过本地 WebSocket 暴露同一套 JSON 协议，让单独部署的浏览器前端可以驱动启动器。它会在内部启动一个 `mclc json` 进程，不负责提供前端静态文件。
+
+```bash
+mclc web
+mclc web --port 7420 --token <token>
+```
+
+- WebSocket 地址：`ws://127.0.0.1:7420/ws`
+- 健康检查：`http://127.0.0.1:7420/health`
+- 服务默认绑定 `127.0.0.1`（可用 `--host` 修改地址）。默认允许 `http://localhost:5173` 这类回环地址来源；其他前端地址需要通过 `--allow-origin <ORIGIN>` 显式允许。
+- 设置 `--token` 后，浏览器连接 `ws://127.0.0.1:7420/ws?token=<token>`，非浏览器客户端也可以通过 `Authorization: Bearer <token>` 传递。
+- 请求、结果和事件的结构与上面的 JSON 模式完全一致。桥接层会在内部重映射请求 ID，因此多个浏览器标签页可以共用一个启动器；请求仍然串行处理。
+- 新 WebSocket 连接会收到当前的 `ready` 事件。事件不会重放，重连后应重新查询 `accounts.list`、`java.list` 和 `versions.list`。
+- `mclc web` 会以当前工作目录作为游戏根目录并在其下创建 `.minecraft`。全局 `--runtime` 和 `--download-source` 选项会传给启动器子进程。
+- 除非清楚风险，否则不要绑定 `0.0.0.0`。绑定非回环地址时必须提供 `--token`，同时应为前端设置明确的 `--allow-origin`。
+
 ## 运行原理
 
 ### 版本发现与安装
@@ -322,6 +342,7 @@ LauncherCore/
 │   ├── commands.rs       # 共享的安装与启动命令逻辑
 │   ├── output.rs         # 人类可读/JSON 输出抽象
 │   ├── json_server.rs    # 常驻 NDJSON 通信服务
+│   ├── web_server.rs     # 面向浏览器前端的本地 WebSocket 后端
 │   ├── install.rs        # 版本安装与文件下载
 │   ├── download.rs       # 下载源、URL 映射与重试
 │   ├── version.rs        # 版本 JSON 继承与合并
@@ -348,6 +369,7 @@ LauncherCore/
 - `clap` - CLI 参数解析
 - `tokio` - 异步运行时
 - `reqwest` - HTTP 客户端（支持流式传输和表单）
+- `axum` - 面向浏览器前端的本地 HTTP 和 WebSocket 服务
 - `serde` / `serde_json` - JSON 序列化/反序列化
 - `anyhow` - 便捷的错误处理
 - `thiserror` - 错误派生宏

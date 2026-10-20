@@ -2,7 +2,7 @@
 
 **Protocol version:** 1  
 **Audience:** GUI launchers, installer frontends, automation, and other clients that embed LauncherCore  
-**Applies to:** the `mclc json` command
+**Applies to:** the `mclc json` command and the `mclc web` WebSocket transport
 
 This guide describes the persistent NDJSON protocol exposed by `mclc json` and how to build a
 client around it. It is intentionally framework-agnostic: any runtime that can spawn a child
@@ -746,6 +746,43 @@ extra requests are queued, but the UI should make that visible.
 
 In every case, keep the child process management outside the UI thread and never block the UI
 while a request is running.
+
+### 7.5 WebSocket transport (`mclc web`)
+
+If the frontend is a browser page rather than a desktop process, `mclc web` provides a local
+transport adapter. It starts an HTTP server (loopback by default), spawns `mclc json` internally,
+and exposes the same messages at:
+
+- `ws://127.0.0.1:7420/ws` by default
+- `GET /health` for launcher status
+
+The browser sends the same request objects and receives the same results, errors, and events.
+Only the transport changes; command semantics are unchanged.
+
+Operational differences:
+
+- Request ids are remapped inside the bridge. The browser's own id is restored on its results,
+  errors, and events.
+- Multiple WebSocket clients can share one launcher. Requests are serialized globally; each
+  outcome goes to the requesting connection. Uncorrelated events are broadcast with `id: null`.
+- Every new connection receives the current `ready` event. Events are not replayed; after
+  reconnecting, query `accounts.list`, `java.list`, and `versions.list` again. An in-flight
+  request continues after a disconnect, but its result is delivered only to an open connection.
+- If the launcher subprocess exits, clients receive a web-specific `launcher_exit` event with
+  `id: null`, and `/health` reports `launcher_alive: false`. Sending `shutdown` stops the launcher
+  subprocess only; the web server remains available and does not restart it automatically.
+- `mclc web` serves no frontend assets. Host the frontend separately; a Vite dev server on
+  localhost works without extra flags. A page opened directly from `file://` sends
+  `Origin: null`; allow it explicitly with `--allow-origin null` only for trusted local
+  development.
+- The launcher child inherits the working directory of `mclc web`, so start it from the game
+  root. `--runtime` and `--download-source` are forwarded to the child.
+- Security: the server binds to loopback by default, allows loopback Origins, accepts additional
+  origins through `--allow-origin`, and accepts a token through `?token=` or an
+  `Authorization: Bearer` header with `--token`. A token is required for non-loopback binds. Host
+  is validated for loopback binds. Do not bind `0.0.0.0`.
+- A public HTTPS frontend that connects to a loopback server may be blocked by browser
+  private-network or mixed-content policy; `--allow-origin` alone does not guarantee it works.
 
 ---
 
