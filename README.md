@@ -187,6 +187,8 @@ mclc list
 
 `mclc json` starts a persistent NDJSON server for GUI integration. It reads one JSON request per line from stdin and writes one JSON event per line to stdout. Human-readable output is converted to `log` events, so the protocol stream never contains unstructured text.
 
+For the complete protocol reference and a framework-agnostic client guide, see [INTEGRATION.md](INTEGRATION.md).
+
 ```bash
 mclc json
 ```
@@ -195,7 +197,7 @@ Startup emits `{"type":"ready","protocol":1,"version":"..."}`. A request carries
 
 ```json
 {"id":1,"command":"install","params":{"version":"1.21.1","loader":"fabric"}}
-{"type":"progress","id":1,"phase":"download","current":42,"total":317,"message":"..."}
+{"type":"progress","id":1,"phase":"downloads","current":42,"total":317,"message":"..."}
 {"type":"result","id":1,"ok":true,"data":{"version_id":"fabric-loader-0.19.5-1.21.1"}}
 ```
 
@@ -333,7 +335,9 @@ LauncherCore/
 │   ├── error.rs          # Error types
 │   └── test_http.rs      # HTTP test helper (test builds only)
 ├── README/
-│   └── README_zh_CN.md   # Simplified Chinese documentation
+│   ├── README_zh_CN.md        # Simplified Chinese documentation
+│   └── INTEGRATION_zh_CN.md   # Simplified Chinese integration guide
+├── INTEGRATION.md        # JSON integration guide
 ├── Cargo.toml            # Project configuration and dependencies
 ├── Cargo.lock            # Locked dependency versions
 └── README.md             # This file

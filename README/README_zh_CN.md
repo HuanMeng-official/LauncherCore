@@ -187,6 +187,8 @@ mclc list
 
 `mclc json` 会启动一个面向 GUI 集成的常驻 NDJSON 服务：从 stdin 每行读取一个 JSON 请求，向 stdout 每行输出一个 JSON 事件。原本的人类可读输出会转换为 `log` 事件，因此协议流中不会混入非结构化文本。
 
+完整协议参考和与框架无关的客户端接入指南见 [INTEGRATION_zh_CN.md](INTEGRATION_zh_CN.md)。
+
 ```bash
 mclc json
 ```
@@ -195,7 +197,7 @@ mclc json
 
 ```json
 {"id":1,"command":"install","params":{"version":"1.21.1","loader":"fabric"}}
-{"type":"progress","id":1,"phase":"download","current":42,"total":317,"message":"..."}
+{"type":"progress","id":1,"phase":"downloads","current":42,"total":317,"message":"..."}
 {"type":"result","id":1,"ok":true,"data":{"version_id":"fabric-loader-0.19.5-1.21.1"}}
 ```
 
@@ -333,7 +335,9 @@ LauncherCore/
 │   ├── error.rs          # 错误类型
 │   └── test_http.rs      # HTTP 测试辅助模块（仅测试构建）
 ├── README/
-│   └── README_zh_CN.md   # 简体中文文档（本文件）
+│   ├── README_zh_CN.md        # 简体中文文档（本文件）
+│   └── INTEGRATION_zh_CN.md   # 简体中文接入指南
+├── INTEGRATION.md        # JSON 接入指南（英文）
 ├── Cargo.toml            # 项目配置和依赖
 ├── Cargo.lock            # 依赖版本锁定
 └── README.md             # 主 README
