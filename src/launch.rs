@@ -302,8 +302,14 @@ impl Launcher {
             let mut file = archive
                 .by_index(i)
                 .with_context(|| format!("Failed to get file entry {} from archive: {:?}", i, jar_path))?;
-            let outpath = extract_dir.join(file.mangled_name());
-            let file_name = file.name().to_lowercase();
+            let outpath = extract_dir.join(
+                file.mangled_name()
+                    .with_context(|| format!("Failed to get entry name {} from archive: {:?}", i, jar_path))?,
+            );
+            let file_name = file
+                .name()
+                .with_context(|| format!("Failed to get entry name {} from archive: {:?}", i, jar_path))?
+                .to_lowercase();
 
             if file_name.ends_with(".dll") || file_name.ends_with(".so") || file_name.ends_with(".dylib") {
                 if let Some(p) = outpath.parent() {
