@@ -2,6 +2,7 @@ use crate::auth::{Authenticator, cache_needs_refresh};
 use crate::download::DownloadSource;
 use crate::install::Installer;
 use crate::launch::Launcher;
+use crate::loader::LoaderKind;
 use crate::models::AuthCache;
 use crate::yggdrasil::{
     AuthlibInjector, YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, select_profile,
@@ -95,6 +96,7 @@ impl LauncherManager {
                 assets_dir,
             },
             installer: Installer {
+                game_dir: minecraft_dir.clone(),
                 versions_dir,
                 libraries_dir,
                 assets_objects_dir,
@@ -290,6 +292,23 @@ impl LauncherManager {
         self.installer.install_version(version_id).await
     }
 
+    pub async fn install_loader(
+        &self,
+        kind: LoaderKind,
+        game_version: &str,
+        loader_version: Option<&str>,
+        java_path_override: Option<String>,
+    ) -> anyhow::Result<String> {
+        crate::loader::install_loader(
+            &self.installer,
+            kind,
+            game_version,
+            loader_version,
+            java_path_override,
+        )
+        .await
+    }
+
     pub async fn login(&self) -> anyhow::Result<AuthCache> {
         self.authenticator.perform_full_authentication().await
     }
@@ -366,6 +385,7 @@ mod tests {
                 assets_dir: minecraft_dir.join("assets"),
             },
             installer: Installer {
+                game_dir: minecraft_dir.clone(),
                 versions_dir: minecraft_dir.join("versions"),
                 libraries_dir: minecraft_dir.join("libraries"),
                 assets_objects_dir: minecraft_dir.join("assets/objects"),

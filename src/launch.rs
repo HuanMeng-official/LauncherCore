@@ -8,6 +8,7 @@ use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+#[derive(Clone, Copy)]
 struct ArgumentContext<'a> {
     os: &'a str,
     arch: &'a str,
@@ -198,7 +199,19 @@ fn build_jvm_arguments(
     if let Some(arguments) = manifest_jvm_arguments {
         args.push("-Xmx2G".to_string());
         args.push("-Xms1G".to_string());
-        args.extend(evaluate_arguments(arguments, ctx));
+
+        // ${version_name} inside JVM arguments refers to the resolved game
+        // jar (e.g. 1.21.1), not the loader profile id. NeoForge relies on
+        // this for -DignoreList=client-extra,${version_name}.jar.
+        let jar_name = version_details
+            .jar
+            .as_deref()
+            .unwrap_or(&version_details.id);
+        let jvm_ctx = ArgumentContext {
+            version_name: jar_name,
+            ..*ctx
+        };
+        args.extend(evaluate_arguments(arguments, &jvm_ctx));
     } else {
         args.extend(default_jvm_arguments(ctx.natives_dir));
     }
@@ -329,9 +342,8 @@ impl Launcher {
             return Err(anyhow::anyhow!("Version {} not found", version_id));
         }
 
-        let version_json_path = version_dir.join(format!("{}.json", version_id));
-        let version_json = fs::read_to_string(&version_json_path)?;
-        let version_details: VersionDetails = serde_json::from_str(&version_json)?;
+        let version_details =
+            crate::version::load_version_details(&self.versions_dir, version_id)?;
 
         let required_java = version_details
             .java_version
@@ -346,8 +358,7 @@ impl Launcher {
         self.verify_and_extract_natives(
             &version_details, &version_natives_dir)?;
 
-        let classpath = self.build_classpath(
-            &version_dir, &version_details)?;
+        let classpath = self.build_classpath(&version_details)?;
 
         let game_dir = self.minecraft_dir.to_string_lossy().to_string();
         let assets_dir = self.assets_dir.to_string_lossy().to_string();
@@ -399,6 +410,9 @@ impl Launcher {
         // Spawn the game process and let launcher exit
         let mut cmd = Command::new(&java_path);
         cmd.args(&command_args);
+        // Match the official launcher: relative paths (logs, crash reports,
+        // options) must resolve inside the game directory.
+        cmd.current_dir(&self.minecraft_dir);
 
         #[cfg(target_os = "windows")]
         {
@@ -423,16 +437,14 @@ impl Launcher {
 
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
+        let natives = crate::models::selected_native_artifacts(
+            &version_details.libraries,
+            os,
+            arch,
+        );
         let mut needs_extraction = false;
 
-        for library in &version_details.libraries {
-            if !library.is_allowed_for_current_platform() {
-                continue;
-            }
-
-            let Some(artifact) = library.native_artifact_for(os, arch) else {
-                continue;
-            };
+        for artifact in &natives {
             let native_path = self.libraries_dir.join(&artifact.path);
 
             if native_path.exists() {
@@ -450,14 +462,7 @@ impl Launcher {
 
         if needs_extraction {
             println!("Extracting native libraries...");
-            for library in &version_details.libraries {
-                if !library.is_allowed_for_current_platform() {
-                    continue;
-                }
-
-                let Some(artifact) = library.native_artifact_for(os, arch) else {
-                    continue;
-                };
+            for artifact in &natives {
                 let native_path = self.libraries_dir.join(&artifact.path);
                 if native_path.exists() {
                     self.extract_lwjgl3_native_library(&native_path, natives_dir)?;
@@ -535,11 +540,17 @@ impl Launcher {
 
     fn build_classpath(
         &self,
-        version_dir: &PathBuf,
         version_details: &VersionDetails,
     ) -> anyhow::Result<String> {
-        let mut classpath = Vec::new();
-        classpath.push(version_dir.join(format!("{}.jar", version_details.id)));
+        let jar_id = version_details
+            .jar
+            .as_deref()
+            .unwrap_or(&version_details.id);
+        let mut classpath = vec![
+            self.versions_dir
+                .join(jar_id)
+                .join(format!("{}.jar", jar_id)),
+        ];
 
         for library in &version_details.libraries {
             // Check if library should be included based on rules
@@ -547,12 +558,10 @@ impl Launcher {
                 continue;
             }
 
-            if let Some(downloads) = &library.downloads {
-                if let Some(artifact) = &downloads.artifact {
-                    let library_path = self.libraries_dir.join(&artifact.path);
-                    if library_path.exists() {
-                        classpath.push(library_path);
-                    }
+            if let Some(artifact) = library.artifact() {
+                let library_path = self.libraries_dir.join(&artifact.path);
+                if library_path.exists() {
+                    classpath.push(library_path);
                 }
             }
         }
@@ -718,6 +727,31 @@ mod tests {
         assert_eq!(args[classpath_flag + 1], "/libraries/a.jar:/libraries/b.jar");
         assert!(args.contains(&"-Xmx4G".to_string()));
         assert!(args.contains(&"-Dcustom=1".to_string()));
+    }
+
+    #[test]
+    fn jvm_args_use_the_resolved_jar_name_for_version_name() {
+        let details = details(
+            r#"{
+                "id": "neoforge-1",
+                "type": "release",
+                "jar": "1.21.1",
+                "mainClass": "Main",
+                "libraries": [],
+                "arguments": {
+                    "jvm": ["-DignoreList=client-extra,${version_name}.jar"],
+                    "game": ["--version", "${version_name}"]
+                }
+            }"#,
+        );
+        let mut ctx = test_context("windows");
+        ctx.version_name = "neoforge-1";
+
+        let jvm = build_jvm_arguments(&details, &ctx, None, None, None, None);
+        assert!(jvm.contains(&"-DignoreList=client-extra,1.21.1.jar".to_string()));
+
+        let game = build_game_arguments(&details, &ctx);
+        assert_eq!(game, vec!["--version", "neoforge-1"]);
     }
 
     #[test]

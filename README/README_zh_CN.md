@@ -21,6 +21,7 @@
 - **Java 运行时检测**：扫描 `JAVA_HOME`、`PATH` 和常见安装目录，自动选择目标 Minecraft 版本要求的大版本；可用 `--runtime` 覆盖
 - **原生库管理**：应用版本规则，只下载并解压当前系统和架构对应的原生库
 - **版本参数驱动**：读取版本 manifest 的 `arguments`（含系统/架构规则），并为旧版本回退到 `minecraftArguments`
+- **模组加载器支持**：可安装 Fabric、Quilt、Forge、NeoForge，并支持 `inheritsFrom` 版本合并
 - **认证支持**：支持离线、微软账户和外置 Yggdrasil（authlib-injector）认证
 - **微软令牌自动刷新**：保存微软 refresh token 和 Minecraft 令牌过期时间，启动前按需自动续期
 - **标准离线 UUID**：离线模式按 Java 的 `OfflinePlayer:<名称>` 规则生成 UUID
@@ -58,7 +59,7 @@ mclc <命令> [选项]
 |------|------|
 | **list** | 列出所有可用的 Minecraft 版本 |
 | **java** | 列出检测到的 Java 运行时 |
-| **install <版本>** | 安装指定的 Minecraft 版本 |
+| **install <版本>** | 安装 Minecraft 版本，可选安装模组加载器 |
 | **launch <版本>** | 启动指定的 Minecraft 版本 |
 | **login** | 登录到微软账户 |
 | **external-login <账号>** | 登录到外置 Yggdrasil 服务器（authlib-injector） |
@@ -110,6 +111,26 @@ mclc install 1.21.3 --download-source bmclapi
 ```bash
 mclc launch 1.21.3 --username 玩家名 --runtime "C:\Program Files\Java\jdk-21\bin\java.exe" --jvm-args "-Xmx4G -XX:+UseG1GC"
 ```
+
+### 模组加载器
+
+为某个 Minecraft 版本安装 Fabric、Quilt、Forge 或 NeoForge：
+
+```bash
+mclc install 1.21.1 --loader fabric
+mclc install 1.21.1 --loader fabric --loader-version 0.20.1
+mclc install 1.21.1 --loader forge
+mclc install 1.21.1 --loader neoforge
+mclc install 1.20.1 --loader quilt
+```
+
+安装完成后会打印加载器版本 ID，可直接启动：
+
+```bash
+mclc launch fabric-loader-0.20.1-1.21.1
+```
+
+Fabric 和 Quilt 的版本 JSON 由加载器元数据构建；Forge 和 NeoForge 会下载官方安装器、校验 SHA-1，并使用检测到的 Java 以 `--installClient` 运行。如果自动选择的 Java 不可用，可用 `--runtime` 指定。
 
 ### 在线模式（微软账户）
 
@@ -166,6 +187,13 @@ mclc list
    - 在打印的命令中隐藏访问令牌等敏感信息
    - 使用 Java 启动 Minecraft 客户端
 
+### 模组加载器安装
+
+- 加载器版本 JSON 使用 `inheritsFrom`；启动器会解析继承链，合并父版本的依赖库、参数、资源索引和 Java 要求
+- Fabric 和 Quilt 使用加载器元数据（`launcherMeta`）构建版本 JSON 并保存到本地
+- Forge 和 NeoForge 从官方 Maven 下载安装器，校验 SHA-1，并使用目标 Minecraft 版本所需的 Java 以 `--installClient` 运行
+- 随后校验加载器依赖和父版本文件，下载缺失内容
+
 ### 认证流程（微软账户）
 
 1. 通过微软 OAuth2 发起设备码流程
@@ -196,6 +224,8 @@ LauncherCore/
 │   ├── cli.rs            # CLI 参数定义
 │   ├── install.rs        # 安装逻辑和下载
 │   ├── download.rs       # 下载源与重试逻辑
+│   ├── loader.rs         # Fabric/Quilt/Forge/NeoForge 安装
+│   ├── version.rs        # 版本 JSON 继承与合并
 │   ├── launch.rs         # 启动参数组装和执行
 │   ├── launch_manager.rs # 启动配置和账号存储
 │   ├── java.rs           # Java 运行时检测和选择
@@ -289,6 +319,13 @@ mclc install 1.21.3 --download-source bmclapi
 2. 儿童账户可能需要由成年人添加到家庭中
 3. 您的账户所在地区必须支持 Xbox Live
 4. 如果缓存的令牌无法继续刷新，请重新执行 `mclc login`
+
+### 模组加载器安装问题？
+
+1. 用 `mclc java` 确认已安装匹配的 Java；Forge/NeoForge 安装器需要 Java
+2. 如果自动选择的 Java 无法运行安装器，使用 `--runtime <路径>` 指定
+3. 使用 `--loader-version <版本>` 固定加载器版本
+4. Forge/NeoForge 安装需要能访问其 Maven 仓库
 
 ### 外置登录问题？
 

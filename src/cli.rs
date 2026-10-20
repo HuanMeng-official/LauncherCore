@@ -1,4 +1,5 @@
 use crate::download::DownloadSource;
+use crate::loader::LoaderKind;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -50,6 +51,14 @@ pub enum Commands {
     Install {
         /// Version to install (e.g., 1.21.11, etc.)
         version: String,
+
+        /// Mod loader to install for this version
+        #[arg(long, value_enum)]
+        loader: Option<LoaderKind>,
+
+        /// Loader version to install (latest if omitted)
+        #[arg(long = "loader-version")]
+        loader_version: Option<String>,
     },
 
     /// Launch specified Minecraft version

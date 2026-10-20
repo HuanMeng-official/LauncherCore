@@ -21,6 +21,7 @@
 - **Java Runtime Detection**: Scans `JAVA_HOME`, `PATH`, and common install directories, then selects the Java major version required by the target Minecraft version; `--runtime` overrides the choice
 - **Native Library Management**: Applies version rules and downloads/extracts only the natives for the current OS and architecture
 - **Manifest-Driven Arguments**: Uses each version's `arguments` (with OS/architecture rules) and falls back to legacy `minecraftArguments`
+- **Mod Loader Support**: Installs Fabric, Quilt, Forge, and NeoForge, including `inheritsFrom` version merging
 - **Authentication Support**: Offline, Microsoft account, and external Yggdrasil (authlib-injector) authentication
 - **Automatic MSA Refresh**: Stores the Microsoft refresh token and Minecraft token expiry, and renews credentials before launch when needed
 - **Standard Offline UUID**: Derives the Java-compatible `OfflinePlayer:<name>` UUID for offline mode
@@ -58,7 +59,7 @@ mclc <COMMAND> [OPTIONS]
 |---------|-------------|
 | **list** | List all available Minecraft versions |
 | **java** | List detected Java runtimes |
-| **install <VERSION>** | Install a specific Minecraft version |
+| **install <VERSION>** | Install a Minecraft version, optionally with a mod loader |
 | **launch <VERSION>** | Launch a Minecraft version |
 | **login** | Login to a Microsoft account |
 | **external-login <IDENTIFIER>** | Login to an external Yggdrasil server (authlib-injector) |
@@ -110,6 +111,26 @@ With custom Java path and JVM arguments:
 ```bash
 mclc launch 1.21.3 --username PlayerName --runtime "C:\Program Files\Java\jdk-21\bin\java.exe" --jvm-args "-Xmx4G -XX:+UseG1GC"
 ```
+
+### Mod Loaders
+
+Install Fabric, Quilt, Forge, or NeoForge for a Minecraft version:
+
+```bash
+mclc install 1.21.1 --loader fabric
+mclc install 1.21.1 --loader fabric --loader-version 0.20.1
+mclc install 1.21.1 --loader forge
+mclc install 1.21.1 --loader neoforge
+mclc install 1.20.1 --loader quilt
+```
+
+The command prints the installed loader version id. Launch it like any other version:
+
+```bash
+mclc launch fabric-loader-0.20.1-1.21.1
+```
+
+Fabric and Quilt profiles are built from their metadata APIs. Forge and NeoForge are installed by downloading their official installer, verifying its SHA-1, and running it with the detected Java runtime. Use `--runtime` if the required Java version is not detected automatically.
 
 ### Online Mode (Microsoft Account)
 
@@ -166,6 +187,13 @@ mclc list
    - Redacts secrets such as the access token from the printed command
    - Launches the Minecraft client with Java
 
+### Mod Loader Installation
+
+- Loader version JSONs use `inheritsFrom`; the launcher resolves the chain and merges the parent's libraries, arguments, asset index, and Java requirement with the loader's overrides
+- Fabric and Quilt profiles are constructed from the loader metadata (`launcherMeta`) and saved as local version JSONs
+- Forge and NeoForge installers are downloaded from their official Maven repositories, verified against the published SHA-1, and executed with `--installClient` using the Java version required by the target Minecraft version
+- Loader libraries and the parent game files are then verified and any missing files are downloaded
+
 ### Authentication Flow (Microsoft Account)
 
 1. Initiates device code flow with Microsoft OAuth2
@@ -196,6 +224,8 @@ LauncherCore/
 │   ├── cli.rs            # CLI argument definitions
 │   ├── install.rs        # Installation logic and downloads
 │   ├── download.rs       # Download sources and retry logic
+│   ├── loader.rs         # Fabric/Quilt/Forge/NeoForge installation
+│   ├── version.rs        # Version JSON inheritance and merging
 │   ├── launch.rs         # Launch argument assembly and execution
 │   ├── launch_manager.rs # Launcher configuration and account storage
 │   ├── java.rs           # Java runtime detection and selection
@@ -289,6 +319,13 @@ mclc install 1.21.3 --download-source bmclapi
 2. Child accounts may need to be added to a family by an adult
 3. Your account must be in a region where Xbox Live is available
 4. If the cached token can no longer be refreshed, run `mclc login` again
+
+### Mod loader installation issues?
+
+1. Use `mclc java` to verify that a matching Java runtime is installed; Forge/NeoForge installers need it
+2. Pass `--runtime <path>` if the automatically selected Java cannot run the installer
+3. Use `--loader-version <version>` to pin a specific loader release
+4. Forge/NeoForge installation requires network access to their Maven repositories
 
 ### External login issues?
 

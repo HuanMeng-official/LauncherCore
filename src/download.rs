@@ -22,7 +22,7 @@ impl DownloadSource {
         match self {
             Self::Auto => "auto (official, BMCLAPI fallback)",
             Self::Official => "official (Mojang)",
-            Self::Bmclapi => "BMCLAPI mirror (bmclapi2.bangbang93.com)",
+            Self::Bmclapi => "BMCLAPI mirror (official fallback)",
         }
     }
 }
@@ -33,7 +33,16 @@ pub fn url_candidates(url: &str, source: DownloadSource) -> Vec<String> {
 
     match source {
         DownloadSource::Official => vec![official],
-        DownloadSource::Bmclapi => vec![mirror.unwrap_or(official)],
+        DownloadSource::Bmclapi => {
+            let mut candidates = Vec::new();
+            if let Some(mirror) = mirror {
+                if mirror != official {
+                    candidates.push(mirror);
+                }
+            }
+            candidates.push(official);
+            candidates
+        }
         DownloadSource::Auto => {
             let mut candidates = vec![official.clone()];
             if let Some(mirror) = mirror {
@@ -96,6 +105,18 @@ fn mirror_url(url: &str) -> Option<String> {
             "https://meta.fabricmc.net",
             "https://bmclapi2.bangbang93.com/fabric-meta",
         ),
+        (
+            "https://maven.minecraftforge.net",
+            "https://bmclapi2.bangbang93.com/maven",
+        ),
+        (
+            "https://maven.neoforged.net/releases",
+            "https://bmclapi2.bangbang93.com/maven",
+        ),
+        (
+            "https://maven.quiltmc.org/repository/release",
+            "https://bmclapi2.bangbang93.com/maven",
+        ),
     ];
 
     MAPPINGS.iter().find_map(|(prefix, replacement)| {
@@ -150,6 +171,54 @@ async fn fetch_json_once<T: DeserializeOwned>(
 ) -> anyhow::Result<T> {
     let response = client.get(url).send().await?.error_for_status()?;
     Ok(response.json::<T>().await?)
+}
+
+pub async fn fetch_text(
+    client: &reqwest::Client,
+    url: &str,
+    source: DownloadSource,
+) -> anyhow::Result<String> {
+    let candidates = url_candidates(url, source);
+    fetch_text_from_candidates(client, &candidates, MAX_ATTEMPTS, RETRY_DELAY)
+        .await
+        .with_context(|| format!("Failed to download {}", url))
+}
+
+async fn fetch_text_from_candidates(
+    client: &reqwest::Client,
+    candidates: &[String],
+    attempts: usize,
+    delay: Duration,
+) -> anyhow::Result<String> {
+    let mut errors = Vec::new();
+
+    for attempt in 0..attempts {
+        for candidate in candidates {
+            match fetch_text_once(client, candidate).await {
+                Ok(value) => return Ok(value),
+                Err(error) => {
+                    errors.push(format!(
+                        "{} (attempt {}/{}): {}",
+                        candidate,
+                        attempt + 1,
+                        attempts,
+                        error
+                    ));
+                }
+            }
+        }
+        sleep_before_retry(attempt, attempts, delay).await;
+    }
+
+    anyhow::bail!("All download attempts failed:\n{}", errors.join("\n"))
+}
+
+async fn fetch_text_once(
+    client: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<String> {
+    let response = client.get(url).send().await?.error_for_status()?;
+    Ok(response.text().await?)
 }
 
 pub async fn download_file(
@@ -344,6 +413,14 @@ mod tests {
             mirror_url("https://repo1.maven.org/maven2/com/example/lib.jar").as_deref(),
             Some("https://bmclapi2.bangbang93.com/maven/com/example/lib.jar")
         );
+        assert_eq!(
+            mirror_url("https://maven.minecraftforge.net/net/example/lib.jar").as_deref(),
+            Some("https://bmclapi2.bangbang93.com/maven/net/example/lib.jar")
+        );
+        assert_eq!(
+            mirror_url("https://maven.neoforged.net/releases/net/example/lib.jar").as_deref(),
+            Some("https://bmclapi2.bangbang93.com/maven/net/example/lib.jar")
+        );
         assert_eq!(mirror_url("https://example.invalid/file"), None);
     }
 
@@ -357,7 +434,10 @@ mod tests {
         );
         assert_eq!(
             url_candidates(official, DownloadSource::Bmclapi),
-            vec!["https://bmclapi2.bangbang93.com/v1/objects/hash/client.jar".to_string()]
+            vec![
+                "https://bmclapi2.bangbang93.com/v1/objects/hash/client.jar".to_string(),
+                official.to_string()
+            ]
         );
         assert_eq!(
             url_candidates(official, DownloadSource::Auto),
@@ -449,6 +529,27 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn retries_text_requests_until_they_succeed() {
+        let server = test_http::serve_sequence(vec![
+            test_http::response("500 Internal Server Error", &[], b"fail"),
+            test_http::response("200 OK", &[], b"checksum"),
+        ])
+        .await;
+
+        let text = fetch_text_from_candidates(
+            &reqwest::Client::new(),
+            &[format!("{}/file.sha1", server.base_url)],
+            3,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(text, "checksum");
+        assert_eq!(server.requests.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

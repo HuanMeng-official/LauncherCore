@@ -15,6 +15,12 @@ const MAVEN_BASE_URL: &str = "https://repo1.maven.org/maven2";
 const MAX_CONCURRENT_DOWNLOADS: usize = 16;
 
 fn manifest_has_linux_arm64_native(library: &crate::models::Library) -> bool {
+    if let Some(classifier) = library.name.split(':').nth(3) {
+        if classifier == "natives-linux-arm64" || classifier == "natives-linux-aarch64" {
+            return true;
+        }
+    }
+
     library
         .downloads
         .as_ref()
@@ -56,6 +62,7 @@ struct DownloadTask {
 
 #[derive(Debug)]
 pub struct Installer {
+    pub game_dir: std::path::PathBuf,
     pub versions_dir: std::path::PathBuf,
     pub libraries_dir: std::path::PathBuf,
     pub assets_objects_dir: std::path::PathBuf,
@@ -81,10 +88,37 @@ impl Installer {
         println!("Download source: {}", self.source.label());
 
         let client = Client::new();
-        let (_version_info, version_details) = self.fetch_version_details(&client, version_id).await?;
+        let (_version_info, version_details) =
+            self.fetch_version_details(&client, version_id).await?;
 
         let version_dir = self.versions_dir.join(version_id);
         fs::create_dir_all(&version_dir)?;
+        fs::write(
+            version_dir.join(format!("{}.json", version_id)),
+            serde_json::to_string_pretty(&version_details)?,
+        )?;
+
+        self.install_loaded_version(version_id).await
+    }
+
+    /// Downloads all files required by an already-written version JSON,
+    /// following `inheritsFrom` when present.
+    pub async fn install_loaded_version(&self, version_id: &str) -> anyhow::Result<()> {
+        let version_details =
+            crate::version::load_version_details(&self.versions_dir, version_id)?;
+        let version_dir = self.versions_dir.join(version_id);
+        fs::create_dir_all(&version_dir)?;
+
+        let jar_id = version_details
+            .jar
+            .clone()
+            .unwrap_or_else(|| version_details.id.clone());
+        let client_jar_path = self
+            .versions_dir
+            .join(&jar_id)
+            .join(format!("{}.jar", jar_id));
+
+        let client = Client::new();
 
         // Collect all download tasks
         let mut tasks = Vec::new();
@@ -96,7 +130,6 @@ impl Installer {
 
         // Client JAR
         if let Some(downloads) = &version_details.downloads {
-            let client_jar_path = version_dir.join(format!("{}.jar", version_id));
             if !client_jar_path.exists() {
                 tasks.push(DownloadTask {
                     url: downloads.client.url.clone(),
@@ -273,11 +306,6 @@ impl Installer {
             }
         }
 
-        // Save version JSON
-        let version_json_path = version_dir.join(format!("{}.json", version_id));
-        let version_json_content = serde_json::to_string_pretty(&version_details)?;
-        fs::write(&version_json_path, version_json_content)?;
-
         println!("Version {} installed successfully!", version_id);
         Ok(())
     }
@@ -313,11 +341,7 @@ impl Installer {
                 continue;
             }
 
-            let Some(downloads) = &library.downloads else {
-                continue;
-            };
-
-            if let Some(artifact) = &downloads.artifact {
+            if let Some(artifact) = library.artifact() {
                 let library_path = self.libraries_dir.join(&artifact.path);
                 if !library_path.exists() {
                     if let Some(parent) = library_path.parent() {
@@ -327,30 +351,32 @@ impl Installer {
                         url: artifact.url.clone(),
                         path: library_path,
                         task_type: "library".to_string(),
-                        sha1: Some(artifact.sha1.clone()),
+                        sha1: (!artifact.sha1.is_empty()).then(|| artifact.sha1.clone()),
                         size: artifact.size,
                     });
                 }
             }
+        }
 
-            if let Some(artifact) =
-                library.native_artifact_for(std::env::consts::OS, std::env::consts::ARCH)
-            {
-                let native_path = self.libraries_dir.join(&artifact.path);
-                if !native_path.exists() {
-                    if let Some(parent) = native_path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    tasks.push(DownloadTask {
-                        url: artifact.url.clone(),
-                        path: native_path.clone(),
-                        task_type: "native".to_string(),
-                        sha1: Some(artifact.sha1.clone()),
-                        size: artifact.size,
-                    });
+        for artifact in selected_native_artifacts(
+            &version_details.libraries,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        ) {
+            let native_path = self.libraries_dir.join(&artifact.path);
+            if !native_path.exists() {
+                if let Some(parent) = native_path.parent() {
+                    let _ = fs::create_dir_all(parent);
                 }
-                extraction_tasks.push((native_path, version_natives_dir.to_path_buf()));
+                tasks.push(DownloadTask {
+                    url: artifact.url.clone(),
+                    path: native_path.clone(),
+                    task_type: "native".to_string(),
+                    sha1: (!artifact.sha1.is_empty()).then(|| artifact.sha1.clone()),
+                    size: artifact.size,
+                });
             }
+            extraction_tasks.push((native_path, version_natives_dir.to_path_buf()));
         }
     }
 
@@ -509,6 +535,7 @@ mod tests {
 
     fn test_installer(dir: &Path) -> Installer {
         Installer {
+            game_dir: dir.to_path_buf(),
             versions_dir: dir.join("versions"),
             libraries_dir: dir.join("libraries"),
             assets_objects_dir: dir.join("assets/objects"),
@@ -681,9 +708,23 @@ mod tests {
             }"#,
         )
         .unwrap();
+        let embedded_arm64: crate::models::Library = serde_json::from_str(
+            r#"{
+                "name": "org.lwjgl:lwjgl:3.3.3:natives-linux-arm64",
+                "downloads": {
+                    "artifact": {
+                        "url": "https://example.invalid/linux-arm64.jar",
+                        "sha1": "0000000000000000000000000000000000000000",
+                        "path": "natives/linux-arm64.jar"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
 
         assert!(manifest_has_linux_arm64_native(&with_arm64));
         assert!(!manifest_has_linux_arm64_native(&without_arm64));
+        assert!(manifest_has_linux_arm64_native(&embedded_arm64));
     }
 
     #[test]

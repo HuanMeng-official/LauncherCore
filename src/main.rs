@@ -8,6 +8,8 @@ mod auth;
 mod yggdrasil;
 mod java;
 mod download;
+mod version;
+mod loader;
 #[cfg(test)]
 mod test_http;
 
@@ -91,9 +93,25 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Install { version } => {
-            manager.install_version(&version).await?;
-        }
+        Commands::Install {
+            version,
+            loader,
+            loader_version,
+        } => match loader {
+            Some(loader) => {
+                manager
+                    .install_loader(
+                        *loader,
+                        version,
+                        loader_version.as_deref(),
+                        global_java_path,
+                    )
+                    .await?;
+            }
+            None => {
+                manager.install_version(version).await?;
+            }
+        },
         Commands::Login => {
             match manager.login().await {
                 Ok(auth_cache) => {

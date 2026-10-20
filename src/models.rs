@@ -112,6 +112,7 @@ pub struct VersionDetails {
     #[serde(rename = "type")]
     pub version_type: String,
     pub downloads: Option<Downloads>,
+    #[serde(default)]
     pub libraries: Vec<Library>,
     #[serde(rename = "mainClass")]
     pub main_class: String,
@@ -122,6 +123,10 @@ pub struct VersionDetails {
     pub asset_index: Option<AssetIndex>,
     #[serde(rename = "javaVersion")]
     pub java_version: Option<JavaVersionSpec>,
+    #[serde(rename = "inheritsFrom", default)]
+    pub inherits_from: Option<String>,
+    #[serde(default)]
+    pub jar: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -156,6 +161,137 @@ pub struct Library {
     pub downloads: Option<LibraryDownloads>,
     pub rules: Option<Vec<Rule>>,
     pub natives: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub sha1: Option<String>,
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
+impl Library {
+    /// Returns the library artifact, supporting both Mojang's `downloads`
+    /// layout and the Maven-coordinate layout used by Fabric/Quilt.
+    pub fn artifact(&self) -> Option<Artifact> {
+        if let Some(artifact) = self.downloads.as_ref().and_then(|downloads| downloads.artifact.clone())
+        {
+            return Some(artifact);
+        }
+
+        let base_url = self.url.as_ref()?;
+        let path = maven_path(&self.name)?;
+        Some(Artifact {
+            url: format!("{}/{}", base_url.trim_end_matches('/'), path),
+            sha1: self.sha1.clone().unwrap_or_default(),
+            path,
+            size: self.size,
+        })
+    }
+}
+
+/// Selects the best native artifact for the given platform, supporting both
+/// Mojang's nested `downloads.classifiers` format and the newer format where
+/// each native is a separate `group:artifact:version:natives-...` library.
+pub(crate) fn selected_native_artifacts(
+    libraries: &[Library],
+    os: &str,
+    arch: &str,
+) -> Vec<Artifact> {
+    let mut selected: HashMap<String, (u8, Artifact)> = HashMap::new();
+
+    for library in libraries {
+        if !library.is_allowed_for(os, arch) {
+            continue;
+        }
+
+        if let Some(artifact) = library.native_artifact_for(os, arch) {
+            selected
+                .entry(library.name.clone())
+                .or_insert_with(|| (2, artifact.clone()));
+        }
+
+        let Some(score) = native_classifier_score(&library.name, os, arch) else {
+            continue;
+        };
+        let Some(artifact) = library.artifact() else {
+            continue;
+        };
+
+        let module = library
+            .name
+            .split(':')
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(":");
+        match selected.get(&module) {
+            Some((best_score, _)) if *best_score >= score => {}
+            _ => {
+                selected.insert(module, (score, artifact));
+            }
+        }
+    }
+
+    selected
+        .into_values()
+        .map(|(_, artifact)| artifact)
+        .collect()
+}
+
+fn native_classifier_score(name: &str, os: &str, arch: &str) -> Option<u8> {
+    let classifier = name.split(':').nth(3)?;
+    let suffix = classifier.strip_prefix("natives-")?;
+
+    let os_token = match os {
+        "windows" => "windows",
+        "linux" => "linux",
+        "macos" if suffix == "osx" || suffix.starts_with("osx-") => "osx",
+        "macos" => "macos",
+        _ => return None,
+    };
+
+    let rest = suffix.strip_prefix(os_token)?;
+    if rest.is_empty() {
+        return Some(1);
+    }
+
+    let arch_token = rest.strip_prefix('-')?;
+    if arch_classifier_names(arch)
+        .iter()
+        .any(|candidate| *candidate == arch_token)
+    {
+        Some(2)
+    } else {
+        None
+    }
+}
+
+fn maven_path(name: &str) -> Option<String> {
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+
+    let group = parts[0].replace('.', "/");
+    let artifact = parts[1];
+    let version = parts[2];
+
+    let (classifier, extension) = match parts.get(3) {
+        Some(extra) => match extra.split_once('@') {
+            Some((classifier, extension)) => (Some(classifier), extension),
+            None => (Some(*extra), "jar"),
+        },
+        None => (None, "jar"),
+    };
+
+    let file_name = match classifier {
+        Some(classifier) => format!("{}-{}-{}.{}", artifact, version, classifier, extension),
+        None => format!("{}-{}.{}", artifact, version, extension),
+    };
+
+    Some(format!(
+        "{}/{}/{}/{}",
+        group, artifact, version, file_name
+    ))
 }
 
 use std::collections::HashMap;
@@ -301,7 +437,7 @@ pub struct LibraryDownloads {
     pub classifiers: Option<Classifiers>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Artifact {
     pub url: String,
     pub sha1: String,
@@ -323,7 +459,9 @@ pub struct Classifiers {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Arguments {
+    #[serde(default)]
     pub game: Vec<serde_json::Value>,
+    #[serde(default)]
     pub jvm: Vec<serde_json::Value>,
 }
 
@@ -483,6 +621,9 @@ mod tests {
             }),
             rules: None,
             natives,
+            url: None,
+            sha1: None,
+            size: None,
         }
     }
 
@@ -506,7 +647,115 @@ mod tests {
             downloads: None,
             rules: Some(rules),
             natives: None,
+            url: None,
+            sha1: None,
+            size: None,
         }
+    }
+
+    #[test]
+    fn selects_the_best_native_from_separate_library_entries() {
+        let libraries: Vec<Library> = serde_json::from_str(
+            r#"[
+                {
+                    "name": "org.lwjgl:lwjgl:3.3.3",
+                    "downloads": {
+                        "artifact": {
+                            "url": "https://example.invalid/lwjgl.jar",
+                            "sha1": "main",
+                            "path": "lwjgl.jar"
+                        }
+                    }
+                },
+                {
+                    "name": "org.lwjgl:lwjgl:3.3.3:natives-windows",
+                    "downloads": {
+                        "artifact": {
+                            "url": "https://example.invalid/win.jar",
+                            "sha1": "win",
+                            "path": "win.jar"
+                        }
+                    }
+                },
+                {
+                    "name": "org.lwjgl:lwjgl:3.3.3:natives-windows-arm64",
+                    "downloads": {
+                        "artifact": {
+                            "url": "https://example.invalid/win-arm64.jar",
+                            "sha1": "win-arm64",
+                            "path": "win-arm64.jar"
+                        }
+                    }
+                },
+                {
+                    "name": "org.lwjgl:lwjgl:3.3.3:natives-linux",
+                    "downloads": {
+                        "artifact": {
+                            "url": "https://example.invalid/linux.jar",
+                            "sha1": "linux",
+                            "path": "linux.jar"
+                        }
+                    }
+                }
+            ]"#,
+        )
+        .unwrap();
+
+        let windows = selected_native_artifacts(&libraries, "windows", "x86_64");
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].path, "win.jar");
+
+        let windows_arm = selected_native_artifacts(&libraries, "windows", "aarch64");
+        assert_eq!(windows_arm.len(), 1);
+        assert_eq!(windows_arm[0].path, "win-arm64.jar");
+
+        let linux = selected_native_artifacts(&libraries, "linux", "x86_64");
+        assert_eq!(linux.len(), 1);
+        assert_eq!(linux[0].path, "linux.jar");
+    }
+
+    #[test]
+    fn resolves_maven_style_library_artifacts() {
+        let library: Library = serde_json::from_str(
+            r#"{
+                "name": "org.ow2.asm:asm:9.10.1",
+                "url": "https://maven.fabricmc.net/",
+                "sha1": "ada2141c0cc52ee8f5c48cd5fa4ce0e794f22236",
+                "size": 126151
+            }"#,
+        )
+        .unwrap();
+
+        let artifact = library.artifact().unwrap();
+
+        assert_eq!(artifact.path, "org/ow2/asm/asm/9.10.1/asm-9.10.1.jar");
+        assert_eq!(
+            artifact.url,
+            "https://maven.fabricmc.net/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar"
+        );
+        assert_eq!(artifact.size, Some(126151));
+    }
+
+    #[test]
+    fn resolves_maven_style_library_classifiers() {
+        let library: Library = serde_json::from_str(
+            r#"{
+                "name": "com.example:demo:1.0:natives-linux",
+                "url": "https://maven.example.invalid/"
+            }"#,
+        )
+        .unwrap();
+
+        let artifact = library.artifact().unwrap();
+
+        assert_eq!(
+            artifact.path,
+            "com/example/demo/1.0/demo-1.0-natives-linux.jar"
+        );
+        assert_eq!(
+            artifact.url,
+            "https://maven.example.invalid/com/example/demo/1.0/demo-1.0-natives-linux.jar"
+        );
     }
 
     #[test]
