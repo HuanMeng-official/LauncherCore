@@ -10,11 +10,35 @@ mod yggdrasil;
 mod test_http;
 
 use anyhow::Result;
+use auth::Authenticator;
 use clap::Parser;
 use cli::{AuthType, Cli, Commands};
 use error::LauncherError;
 use launch_manager::LauncherManager;
-use yggdrasil::{YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile};
+use yggdrasil::{
+    YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, format_uuid,
+};
+
+fn resolve_password(cli_password: Option<&str>) -> Result<String> {
+    if let Some(password) = cli_password {
+        eprintln!(
+            "Warning: passing --password on the command line can expose it in shell history and process listings."
+        );
+        return Ok(password.to_string());
+    }
+
+    if let Ok(password) = std::env::var("MCLC_PASSWORD") {
+        if !password.is_empty() {
+            return Ok(password);
+        }
+    }
+
+    let password = rpassword::prompt_password("Password: ")?;
+    if password.is_empty() {
+        anyhow::bail!("Password cannot be empty");
+    }
+    Ok(password)
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -69,24 +93,43 @@ async fn main() -> Result<()> {
                 )?;
             }
             AuthType::Msa => {
-                match manager.load_auth_cache()? {
-                    Some(auth_cache) => {
-                        manager.launch(
-                            &version,
-                            auth_cache.username,
-                            auth_cache.access_token,
-                            auth_cache.uuid,
-                            "msa".to_string(),
-                            jvm_args.clone(),
-                            global_java_path,
-                            None,
-                            None,
-                            None,
-                        )?;
-                    }
-                    None => {
-                        eprintln!("{}", LauncherError::AuthNotFound);
-                        std::process::exit(1);
+                if let Some(access_token) = access_token {
+                    let profile = Authenticator::default()
+                        .get_minecraft_profile(access_token)
+                        .await?;
+
+                    manager.launch(
+                        &version,
+                        profile.name,
+                        access_token.clone(),
+                        format_uuid(&profile.id),
+                        "msa".to_string(),
+                        jvm_args.clone(),
+                        global_java_path,
+                        None,
+                        None,
+                        None,
+                    )?;
+                } else {
+                    match manager.load_auth_cache()? {
+                        Some(auth_cache) => {
+                            manager.launch(
+                                &version,
+                                auth_cache.username,
+                                auth_cache.access_token,
+                                auth_cache.uuid,
+                                "msa".to_string(),
+                                jvm_args.clone(),
+                                global_java_path,
+                                None,
+                                None,
+                                None,
+                            )?;
+                        }
+                        None => {
+                            eprintln!("{}", LauncherError::AuthNotFound);
+                            std::process::exit(1);
+                        }
                     }
                 }
             }
@@ -173,7 +216,15 @@ async fn main() -> Result<()> {
             password,
             api_url,
         } => {
-            match manager.external_login(&identifier, &password, &api_url).await {
+            let password = match resolve_password(password.as_deref()) {
+                Ok(password) => password,
+                Err(e) => {
+                    eprintln!("Failed to read password: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            match manager.external_login(identifier, &password, api_url).await {
                 Ok(_) => {
                     println!("External login successful!");
                     println!("You can now launch with: mclc launch --version <version> --auth external --api-url {} --username {}",

@@ -1,11 +1,13 @@
 use crate::models::*;
 use anyhow::Context;
 use base64::Engine as _;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{stdout, Write};
-use std::path::PathBuf;
+use std::io::{stdout, Read, Write};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 // Re-export YggdrasilProfile for use in main.rs
@@ -15,7 +17,7 @@ const AUTHLIB_INJECTOR_API_BASE: &str = "https://authlib-injector.yushi.moe";
 const AUTHLIB_INJECTOR_API_MIRROR: &str = "https://bmclapi2.bangbang93.com/mirrors/authlib-injector";
 
 /// Returns the formatted UUID with dashes
-fn format_uuid(uuid: &str) -> String {
+pub(crate) fn format_uuid(uuid: &str) -> String {
     if uuid.len() == 32 {
         format!(
             "{}-{}-{}-{}-{}",
@@ -309,6 +311,47 @@ impl YggdrasilAccount {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct AuthlibLatest {
+    download_url: String,
+    #[serde(default)]
+    checksums: Option<AuthlibChecksums>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthlibChecksums {
+    sha256: Option<String>,
+}
+
+#[cfg(test)]
+fn sha256_hex(data: &[u8]) -> String {
+    Sha256::digest(data)
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect()
+}
+
+fn file_sha256(path: &Path) -> anyhow::Result<String> {
+    let mut file =
+        fs::File::open(path).with_context(|| format!("Failed to open file: {:?}", path))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect())
+}
+
 pub struct AuthlibInjector {
     cache_dir: PathBuf,
 }
@@ -319,98 +362,212 @@ impl AuthlibInjector {
     }
 
     pub async fn get_or_download(&self) -> anyhow::Result<PathBuf> {
+        self.get_or_download_from(AUTHLIB_INJECTOR_API_BASE, AUTHLIB_INJECTOR_API_MIRROR)
+            .await
+    }
+
+    async fn fetch_latest(
+        &self,
+        client: &Client,
+        api_base: &str,
+    ) -> anyhow::Result<AuthlibLatest> {
+        let api_url = format!("{}/artifact/latest.json", api_base.trim_end_matches('/'));
+        let response = client.get(&api_url).send().await?.error_for_status()?;
+        Ok(response.json::<AuthlibLatest>().await?)
+    }
+
+    async fn get_or_download_from(
+        &self,
+        api_base: &str,
+        mirror_base: &str,
+    ) -> anyhow::Result<PathBuf> {
         let jar_path = self.cache_dir.join("authlib-injector.jar");
-
-        if jar_path.exists() {
-            return Ok(jar_path);
-        }
-
-        println!("Fetching authlib-injector download URL...");
-
-        // Try to get latest version info from API
         let client = Client::new();
-        let api_url = format!("{}/artifact/latest.json", AUTHLIB_INJECTOR_API_BASE);
 
-        let download_url = match client.get(&api_url).send().await {
-            Ok(response) if response.status().is_success() => {
-                let json: serde_json::Value = response.json().await?;
-                match json["download_url"].as_str() {
-                    Some(url) => url.to_string(),
-                    None => {
-                        // Fallback to mirror
-                        println!("Using BMCLAPI mirror...");
-                        format!("{}/artifact/latest/authlib-injector.jar", AUTHLIB_INJECTOR_API_MIRROR)
-                    }
-                }
-            }
-            _ => {
-                println!("Using BMCLAPI mirror...");
-                format!("{}/artifact/latest/authlib-injector.jar", AUTHLIB_INJECTOR_API_MIRROR)
+        let latest = match self.fetch_latest(&client, api_base).await {
+            Ok(latest) => latest,
+            Err(error) => {
+                println!(
+                    "Failed to query authlib-injector API ({}), trying BMCLAPI mirror...",
+                    error
+                );
+                self.fetch_latest(&client, mirror_base)
+                    .await
+                    .context("Failed to query authlib-injector mirror")?
             }
         };
 
-        println!("Downloading authlib-injector from: {}", download_url);
+        let expected_sha256 = latest
+            .checksums
+            .as_ref()
+            .and_then(|checksums| checksums.sha256.as_deref());
 
-        // Create cache directory if it doesn't exist
-        if let Some(parent) = jar_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {:?}", parent))?;
-        }
-
-        let response = client
-            .get(&download_url)
-            .send()
-            .await
-            .context("Failed to connect to authlib-injector download server")?;
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Failed to download authlib-injector: HTTP {}",
-                response.status()
-            ));
-        }
-
-        // Read the response body first to get total size
-        let total_bytes = response.content_length().unwrap_or(0);
-
-        // Create the file
-        {
-            let mut file = std::fs::File::create(&jar_path)
-                .with_context(|| format!("Failed to create file: {:?}", jar_path))?;
-
-            let mut downloaded = 0u64;
-
-            // Use bytes() to get a stream of bytes
-            let mut stream = response.bytes_stream();
-
-            use futures_util::StreamExt;
-
-            while let Some(chunk_result) = stream.next().await {
-                let chunk = chunk_result
-                    .with_context(|| "Failed to read response chunk")?;
-                let n = chunk.len();
-                if n == 0 {
-                    break;
+        if jar_path.exists() {
+            match expected_sha256 {
+                Some(expected) if file_sha256(&jar_path)?.eq_ignore_ascii_case(expected) => {
+                    return Ok(jar_path);
                 }
-                downloaded += n as u64;
-                file.write_all(&chunk)
-                    .with_context(|| format!("Failed to write to file: {:?}", jar_path))?;
-
-                if total_bytes > 0 {
-                    let progress = (downloaded as f64 / total_bytes as f64 * 100.0) as u32;
-                    if downloaded % (1024 * 1024) == 0 || downloaded == total_bytes {
-                        println!(
-                            "Downloaded: {}/{} bytes ({:.0}%)",
-                            downloaded,
-                            total_bytes,
-                            progress
-                        );
-                    }
+                Some(_) => {
+                    println!(
+                        "Cached authlib-injector.jar failed checksum verification, re-downloading..."
+                    );
                 }
+                None => return Ok(jar_path),
             }
         }
 
+        println!("Downloading authlib-injector from: {}", latest.download_url);
+        fs::create_dir_all(&self.cache_dir)
+            .with_context(|| format!("Failed to create directory: {:?}", self.cache_dir))?;
+
+        let response = client
+            .get(&latest.download_url)
+            .send()
+            .await
+            .context("Failed to connect to authlib-injector download server")?
+            .error_for_status()
+            .context("Failed to download authlib-injector")?;
+
+        let total_bytes = response.content_length().unwrap_or(0);
+        let mut temp = tempfile::NamedTempFile::new_in(&self.cache_dir)
+            .with_context(|| format!("Failed to create temporary file in {:?}", self.cache_dir))?;
+        let mut hasher = Sha256::new();
+        let mut downloaded = 0u64;
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Failed to read response chunk")?;
+            temp.write_all(&chunk)?;
+            hasher.update(&chunk);
+            downloaded += chunk.len() as u64;
+
+            if total_bytes > 0 && (downloaded % (1024 * 1024) == 0 || downloaded == total_bytes) {
+                println!(
+                    "Downloaded: {}/{} bytes ({:.0}%)",
+                    downloaded,
+                    total_bytes,
+                    downloaded as f64 / total_bytes as f64 * 100.0
+                );
+            }
+        }
+        temp.flush().context("Failed to flush downloaded data")?;
+
+        if let Some(expected) = expected_sha256 {
+            let actual: String = hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{:02x}", byte))
+                .collect();
+            if !actual.eq_ignore_ascii_case(expected) {
+                anyhow::bail!(
+                    "SHA-256 mismatch for authlib-injector: expected {}, got {}",
+                    expected,
+                    actual
+                );
+            }
+        }
+
+        temp.persist(&jar_path)
+            .map_err(|error| anyhow::anyhow!("Failed to save authlib-injector.jar: {}", error))?;
+
         println!("authlib-injector.jar downloaded successfully");
         Ok(jar_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_http;
+
+    async fn latest_json_server(download_url: &str, sha256: &str) -> test_http::TestServer {
+        let body = format!(
+            r#"{{"download_url":"{}","checksums":{{"sha256":"{}"}}}}"#,
+            download_url, sha256
+        );
+        test_http::serve_once(test_http::response("200 OK", &[], body.as_bytes())).await
+    }
+
+    #[tokio::test]
+    async fn downloads_authlib_injector_with_checksum() {
+        let jar = b"authlib-injector-bytes";
+        let jar_server = test_http::serve_once(test_http::response("200 OK", &[], jar)).await;
+        let api_server =
+            latest_json_server(&format!("{}/artifact.jar", jar_server.base_url), &sha256_hex(jar))
+                .await;
+        let temp = tempfile::tempdir().unwrap();
+        let injector = AuthlibInjector::new(temp.path().to_path_buf());
+
+        let path = injector
+            .get_or_download_from(&api_server.base_url, &api_server.base_url)
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(path).unwrap(), jar);
+    }
+
+    #[tokio::test]
+    async fn rejects_authlib_injector_with_wrong_checksum() {
+        let jar = b"tampered";
+        let jar_server = test_http::serve_once(test_http::response("200 OK", &[], jar)).await;
+        let api_server = latest_json_server(
+            &format!("{}/artifact.jar", jar_server.base_url),
+            &"0".repeat(64),
+        )
+        .await;
+        let temp = tempfile::tempdir().unwrap();
+        let injector = AuthlibInjector::new(temp.path().to_path_buf());
+
+        let result = injector
+            .get_or_download_from(&api_server.base_url, &api_server.base_url)
+            .await;
+
+        assert!(result.is_err());
+        assert!(!temp.path().join("authlib-injector.jar").exists());
+    }
+
+    #[tokio::test]
+    async fn replaces_a_corrupt_cached_jar() {
+        let jar = b"correct-jar";
+        let jar_server = test_http::serve_once(test_http::response("200 OK", &[], jar)).await;
+        let api_server =
+            latest_json_server(&format!("{}/artifact.jar", jar_server.base_url), &sha256_hex(jar))
+                .await;
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("authlib-injector.jar"), b"truncated").unwrap();
+        let injector = AuthlibInjector::new(temp.path().to_path_buf());
+
+        let path = injector
+            .get_or_download_from(&api_server.base_url, &api_server.base_url)
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(path).unwrap(), jar);
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_mirror_when_official_api_fails() {
+        let jar = b"mirror-jar";
+        let jar_server = test_http::serve_once(test_http::response("200 OK", &[], jar)).await;
+        let mirror_server = latest_json_server(
+            &format!("{}/artifact.jar", jar_server.base_url),
+            &sha256_hex(jar),
+        )
+        .await;
+        let official_server = test_http::serve_once(test_http::response(
+            "500 Internal Server Error",
+            &[],
+            b"unavailable",
+        ))
+        .await;
+        let temp = tempfile::tempdir().unwrap();
+        let injector = AuthlibInjector::new(temp.path().to_path_buf());
+
+        let path = injector
+            .get_or_download_from(&official_server.base_url, &mirror_server.base_url)
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(path).unwrap(), jar);
     }
 }

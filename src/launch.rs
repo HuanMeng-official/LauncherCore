@@ -229,6 +229,30 @@ fn build_jvm_arguments(
     args
 }
 
+fn redact_sensitive_arguments(args: &[String]) -> Vec<String> {
+    let mut redacted = args.to_vec();
+    let mut redact_next = false;
+
+    for arg in &mut redacted {
+        if redact_next {
+            *arg = "<redacted>".to_string();
+            redact_next = false;
+            continue;
+        }
+
+        if matches!(arg.as_str(), "--accessToken" | "--session" | "--access-token") {
+            redact_next = true;
+        } else if let Some((flag, _)) = arg.split_once('=') {
+            if flag == "--accessToken" || flag == "--session" {
+                let replacement = format!("{}=<redacted>", flag);
+                *arg = replacement;
+            }
+        }
+    }
+
+    redacted
+}
+
 fn build_game_arguments(
     version_details: &VersionDetails,
     ctx: &ArgumentContext,
@@ -369,7 +393,7 @@ impl Launcher {
         println!(
             "Launching with command: {} {:?}",
             java_path.display(),
-            command_args
+            redact_sensitive_arguments(&command_args)
         );
 
         // Spawn the game process and let launcher exit
@@ -720,6 +744,32 @@ mod tests {
         assert_eq!(args[classpath_flag + 1], "/libraries/a.jar:/libraries/b.jar");
         assert!(args.contains(&"-Xmx4G".to_string()));
         assert!(args.contains(&"-Dcustom=1".to_string()));
+    }
+
+    #[test]
+    fn sensitive_arguments_are_redacted() {
+        let args: Vec<String> = [
+            "--username",
+            "Alice",
+            "--accessToken",
+            "secret-token",
+            "--session",
+            "token:secret-token:uuid",
+            "--version",
+            "1.21.1",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+
+        let redacted = redact_sensitive_arguments(&args);
+
+        assert_eq!(redacted[3], "<redacted>");
+        assert_eq!(redacted[5], "<redacted>");
+        assert!(!redacted.iter().any(|arg| arg == "secret-token"));
+        assert!(!redacted
+            .iter()
+            .any(|arg| arg.starts_with("token:secret-token")));
     }
 
     #[test]

@@ -186,7 +186,7 @@ impl Installer {
         // Assets (now index should exist)
         if let Some(ref index_path) = asset_index_path {
             if index_path.exists() {
-                self.collect_asset_download_tasks(index_path, &mut tasks);
+                self.collect_asset_download_tasks(index_path, &mut tasks)?;
             }
         }
 
@@ -414,30 +414,37 @@ impl Installer {
         }
     }
 
-    fn collect_asset_download_tasks(&self, asset_index_path: &Path, tasks: &mut Vec<DownloadTask>) {
-        if let Ok(asset_index_content) = fs::read_to_string(asset_index_path) {
-            if let Ok(assets_index) = serde_json::from_str::<AssetsIndex>(&asset_index_content) {
-                for (_name, asset_object) in &assets_index.objects {
-                    let hash = &asset_object.hash;
-                    let first_two = &hash[..2];
-                    let asset_path = self.assets_objects_dir.join(first_two).join(hash);
+    fn collect_asset_download_tasks(
+        &self,
+        asset_index_path: &Path,
+        tasks: &mut Vec<DownloadTask>,
+    ) -> anyhow::Result<()> {
+        let asset_index_content = fs::read_to_string(asset_index_path)
+            .with_context(|| format!("Failed to read asset index: {:?}", asset_index_path))?;
+        let assets_index: AssetsIndex = serde_json::from_str(&asset_index_content)
+            .with_context(|| format!("Failed to parse asset index: {:?}", asset_index_path))?;
 
-                    if !asset_path.exists() {
-                        if let Some(parent) = asset_path.parent() {
-                            let _ = fs::create_dir_all(parent);
-                        }
-                        let asset_url = format!("{}/{}/{}", ASSET_BASE_URL, first_two, hash);
-                        tasks.push(DownloadTask {
-                            url: asset_url,
-                            path: asset_path,
-                            task_type: "asset".to_string(),
-                            sha1: Some(hash.clone()),
-                            size: Some(asset_object.size),
-                        });
-                    }
+        for (_name, asset_object) in &assets_index.objects {
+            let hash = &asset_object.hash;
+            let first_two = &hash[..2];
+            let asset_path = self.assets_objects_dir.join(first_two).join(hash);
+
+            if !asset_path.exists() {
+                if let Some(parent) = asset_path.parent() {
+                    let _ = fs::create_dir_all(parent);
                 }
+                let asset_url = format!("{}/{}/{}", ASSET_BASE_URL, first_two, hash);
+                tasks.push(DownloadTask {
+                    url: asset_url,
+                    path: asset_path,
+                    task_type: "asset".to_string(),
+                    sha1: Some(hash.clone()),
+                    size: Some(asset_object.size),
+                });
             }
         }
+
+        Ok(())
     }
 
     async fn download_file(
@@ -686,6 +693,19 @@ mod tests {
             body,
             "a file with the wrong size must be downloaded again"
         );
+    }
+
+    #[test]
+    fn invalid_asset_index_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let installer = test_installer(dir.path());
+        let index_path = dir.path().join("broken.json");
+        fs::write(&index_path, "{ not valid json").unwrap();
+        let mut tasks = Vec::new();
+
+        let result = installer.collect_asset_download_tasks(&index_path, &mut tasks);
+
+        assert!(result.is_err());
     }
 
     #[test]

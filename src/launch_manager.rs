@@ -2,9 +2,11 @@ use crate::auth::Authenticator;
 use crate::install::Installer;
 use crate::launch::Launcher;
 use crate::models::AuthCache;
-use crate::yggdrasil::{AuthlibInjector, YggdrasilAccount, YggdrasilAuthenticator};
+use crate::yggdrasil::{
+    AuthlibInjector, YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, select_profile,
+};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn normalize_api_url(url: &str) -> String {
     let mut url = url.trim().trim_end_matches('/').to_string();
@@ -12,6 +14,44 @@ fn normalize_api_url(url: &str) -> String {
         url = format!("https://{}", url);
     }
     url
+}
+
+fn write_private_file(path: &Path, contents: &str) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        file.write_all(contents.as_bytes())?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents)?;
+    }
+
+    Ok(())
+}
+
+fn set_private_dir_permissions(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -38,6 +78,7 @@ impl LauncherManager {
             .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?
             .join("mclc");
         fs::create_dir_all(&config_dir)?;
+        set_private_dir_permissions(&config_dir)?;
 
         fs::create_dir_all(&versions_dir)?;
         fs::create_dir_all(&libraries_dir)?;
@@ -75,7 +116,9 @@ impl LauncherManager {
     pub fn save_auth_cache(&self, cache: &AuthCache) -> anyhow::Result<()> {
         let cache_path = self.get_auth_cache_path();
         let json = serde_json::to_string_pretty(cache)?;
-        fs::write(&cache_path, json)?;
+        fs::create_dir_all(&self.config_dir)?;
+        set_private_dir_permissions(&self.config_dir)?;
+        write_private_file(&cache_path, &json)?;
         println!("Authentication information saved to {:?}", cache_path);
         Ok(())
     }
@@ -104,7 +147,9 @@ impl LauncherManager {
     pub fn save_accounts(&self, accounts: &[YggdrasilAccount]) -> anyhow::Result<()> {
         let accounts_path = self.get_accounts_path();
         let json = serde_json::to_string_pretty(accounts)?;
-        fs::write(&accounts_path, json)?;
+        fs::create_dir_all(&self.config_dir)?;
+        set_private_dir_permissions(&self.config_dir)?;
+        write_private_file(&accounts_path, &json)?;
         println!("Accounts saved to {:?}", accounts_path);
         Ok(())
     }
@@ -151,6 +196,20 @@ impl LauncherManager {
         password: &str,
         api_url: &str,
     ) -> anyhow::Result<YggdrasilAccount> {
+        self.external_login_with_selector(identifier, password, api_url, select_profile)
+            .await
+    }
+
+    pub async fn external_login_with_selector<F>(
+        &self,
+        identifier: &str,
+        password: &str,
+        api_url: &str,
+        select_profile: F,
+    ) -> anyhow::Result<YggdrasilAccount>
+    where
+        F: Fn(&[YggdrasilProfile]) -> anyhow::Result<YggdrasilProfile>,
+    {
         // Resolve API URL via ALI
         let resolved_url = YggdrasilAuthenticator::resolve_api_url(api_url).await?;
         println!("Resolved API URL: {}", resolved_url);
@@ -165,7 +224,31 @@ impl LauncherManager {
         println!("Connected to: {}", server_name.as_deref().unwrap_or(&resolved_url));
 
         // Authenticate
-        let auth_response = authenticator.authenticate(identifier, password).await?;
+        let mut auth_response = authenticator.authenticate(identifier, password).await?;
+
+        // Some Yggdrasil servers return no selected profile when the account has
+        // multiple characters. The token is unbound until a refresh selects one.
+        if auth_response.selected_profile.is_none() {
+            if auth_response.available_profiles.is_empty() {
+                anyhow::bail!("No profiles available for this account");
+            }
+
+            let profile = select_profile(&auth_response.available_profiles)?;
+            println!("Binding profile: {}", profile.name);
+
+            let mut refreshed = authenticator
+                .refresh(
+                    &auth_response.access_token,
+                    Some(&auth_response.client_token),
+                    Some(profile.clone()),
+                )
+                .await?;
+
+            if refreshed.selected_profile.is_none() {
+                refreshed.selected_profile = Some(profile);
+            }
+            auth_response = refreshed;
+        }
 
         // Create account from response
         let account = YggdrasilAccount::from_auth_response(
@@ -280,6 +363,89 @@ mod tests {
             user_id: "00000000-0000-0000-0000-000000000000".to_string(),
             user_properties: "{}".to_string(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auth_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let manager = manager_with_config(temp.path().to_path_buf());
+        fs::create_dir_all(&manager.config_dir).unwrap();
+
+        manager
+            .save_auth_cache(&AuthCache {
+                access_token: "token".to_string(),
+                uuid: "uuid".to_string(),
+                username: "Alice".to_string(),
+            })
+            .unwrap();
+        manager
+            .save_accounts(&[account("https://example.invalid")])
+            .unwrap();
+
+        for path in [manager.get_auth_cache_path(), manager.get_accounts_path()] {
+            let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{:?} must not be readable by other users", path);
+        }
+    }
+
+    #[tokio::test]
+    async fn external_login_binds_the_selected_profile() {
+        let metadata =
+            r#"{"meta":{"serverName":"Test Server"},"skinDomains":[],"signaturePublickey":"key"}"#;
+        let authenticate = r#"{
+            "accessToken": "initial-token",
+            "clientToken": "client-token",
+            "availableProfiles": [
+                {"id": "00112233445566778899aabbccddeeff", "name": "Alice"}
+            ],
+            "selectedProfile": null,
+            "user": {"id": "00112233445566778899aabbccddeeff", "properties": []}
+        }"#;
+        let refresh = r#"{
+            "accessToken": "refreshed-token",
+            "clientToken": "client-token",
+            "availableProfiles": [
+                {"id": "00112233445566778899aabbccddeeff", "name": "Alice"}
+            ],
+            "selectedProfile": {"id": "00112233445566778899aabbccddeeff", "name": "Alice"},
+            "user": {"id": "00112233445566778899aabbccddeeff", "properties": []}
+        }"#;
+        let server = test_http::serve_sequence(vec![
+            test_http::response(
+                "200 OK",
+                &[("X-Authlib-Injector-API-Location", "/api/yggdrasil")],
+                b"",
+            ),
+            test_http::response("200 OK", &[], metadata.as_bytes()),
+            test_http::response("200 OK", &[], authenticate.as_bytes()),
+            test_http::response("200 OK", &[], refresh.as_bytes()),
+        ])
+        .await;
+        let temp = tempfile::tempdir().unwrap();
+        let manager = manager_with_config(temp.path().to_path_buf());
+        fs::create_dir_all(&manager.config_dir).unwrap();
+
+        let account = manager
+            .external_login_with_selector("alice", "password", &server.base_url, |profiles| {
+                Ok(profiles[0].clone())
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(account.access_token, "refreshed-token");
+
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert_eq!(requests[0].method, "GET");
+        assert!(requests[3].method == "POST");
+        assert!(requests[3].path.ends_with("/authserver/refresh"));
+        assert!(requests[3].body.contains("selectedProfile"));
+        assert!(requests[3]
+            .body
+            .contains("00112233445566778899aabbccddeeff"));
     }
 
     #[tokio::test]

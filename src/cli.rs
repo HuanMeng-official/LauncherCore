@@ -79,12 +79,35 @@ pub enum Commands {
         /// Account identifier (email or username)
         identifier: String,
 
-        /// Password
+        /// Password (omit to be prompted; can also be set via MCLC_PASSWORD)
         #[arg(short = 'p', long)]
-        password: String,
+        password: Option<String>,
 
         /// API URL of the auth server
         #[arg(short = 'a', long = "api-url")]
         api_url: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn external_login_password_is_optional() {
+        let cli = Cli::try_parse_from([
+            "mclc",
+            "external-login",
+            "alice",
+            "--api-url",
+            "https://example.invalid",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::ExternalLogin { password, .. } => assert!(password.is_none()),
+            _ => panic!("unexpected command"),
+        }
+    }
 }
