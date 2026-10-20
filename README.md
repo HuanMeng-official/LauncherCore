@@ -92,7 +92,7 @@ mclc launch 1.21.3 --auth msa
 Or using a cached access token:
 
 ```bash
-mclc launch 1.21.3 --auth msa --access_token <your_token>
+mclc launch 1.21.3 --auth msa --access-token <your_token>
 ```
 
 ### List Available Versions
