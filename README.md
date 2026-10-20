@@ -66,7 +66,7 @@ mclc <COMMAND> [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-r, --runtime <PATH>` | Override automatic Java detection |
+| `-r, --runtime <PATH>` | Path to the Java executable (overrides automatic detection) |
 | `--download-source <SOURCE>` | Download source: `auto` (default), `official`, or `bmclapi` |
 
 ### Install Options
@@ -86,7 +86,7 @@ mclc <COMMAND> [OPTIONS]
 | `--auth <TYPE>` | Authentication type: `offline` (default), `msa`, or `external` |
 | `--api-url <URL>` | Yggdrasil API URL (external auth) |
 | `--authlib-jar <PATH>` | Use a local authlib-injector.jar instead of downloading one |
-| `-r, --runtime <PATH>` | Override automatic Java detection |
+| `-r, --runtime <PATH>` | Path to the Java executable (overrides automatic detection) |
 
 ### External Login Options
 

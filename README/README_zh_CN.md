@@ -66,7 +66,7 @@ mclc <命令> [选项]
 
 | 选项 | 描述 |
 |------|------|
-| `-r, --runtime <路径>` | 覆盖自动 Java 检测 |
+| `-r, --runtime <路径>` | Java 可执行文件路径（覆盖自动检测） |
 | `--download-source <来源>` | 下载源：`auto`（默认）、`official` 或 `bmclapi` |
 
 ### 安装选项
@@ -86,7 +86,7 @@ mclc <命令> [选项]
 | `--auth <类型>` | 认证类型：`offline`（默认）、`msa` 或 `external` |
 | `--api-url <地址>` | Yggdrasil API 地址（外置登录） |
 | `--authlib-jar <路径>` | 使用本地的 authlib-injector.jar，跳过自动下载 |
-| `-r, --runtime <路径>` | 覆盖自动 Java 检测 |
+| `-r, --runtime <路径>` | Java 可执行文件路径（覆盖自动检测） |
 
 ### 外置登录选项
 
