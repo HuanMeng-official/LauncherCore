@@ -166,6 +166,129 @@ pub struct Rule {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OsRule {
     pub name: String,
+    #[serde(default)]
+    pub arch: Option<String>,
+}
+
+impl Rule {
+    fn matches(&self, os: &str, arch: &str) -> bool {
+        let Some(os_rule) = &self.os else {
+            return true;
+        };
+
+        let name_matches = match (os_rule.name.as_str(), os) {
+            ("osx", "macos") | ("macos", "macos") => true,
+            (rule_name, actual_os) => rule_name == actual_os,
+        };
+
+        let arch_matches = match &os_rule.arch {
+            None => true,
+            Some(rule_arch) => rule_arch == normalize_arch(arch),
+        };
+
+        name_matches && arch_matches
+    }
+}
+
+pub(crate) fn normalize_arch(arch: &str) -> &str {
+    match arch {
+        "amd64" | "x64" => "x86_64",
+        "i386" | "i586" | "i686" | "32" => "x86",
+        "aarch64" => "arm64",
+        other => other,
+    }
+}
+
+fn arch_classifier_names(arch: &str) -> Vec<&str> {
+    match normalize_arch(arch) {
+        "x86_64" => vec!["x86_64", "x64", "64"],
+        "x86" => vec!["x86", "i386", "32"],
+        "arm64" => vec!["arm64", "aarch64"],
+        other => vec![other],
+    }
+}
+
+fn arch_bits(arch: &str) -> &str {
+    match normalize_arch(arch) {
+        "x86_64" => "64",
+        "x86" => "32",
+        other => other,
+    }
+}
+
+impl Library {
+    pub fn is_allowed_for(&self, os: &str, arch: &str) -> bool {
+        let Some(rules) = &self.rules else {
+            return true;
+        };
+
+        let mut allowed = false;
+        for rule in rules {
+            let matches = rule.matches(os, arch);
+            if rule.action == "allow" && matches {
+                allowed = true;
+            } else if rule.action == "disallow" && matches {
+                return false;
+            }
+        }
+        allowed
+    }
+
+    pub fn is_allowed_for_current_platform(&self) -> bool {
+        self.is_allowed_for(std::env::consts::OS, std::env::consts::ARCH)
+    }
+
+    pub fn native_artifact_for(&self, os: &str, arch: &str) -> Option<&Artifact> {
+        let classifiers = self.downloads.as_ref()?.classifiers.as_ref()?;
+
+        if let Some(natives) = &self.natives {
+            let os_key = if os == "macos" { "osx" } else { os };
+            if let Some(classifier_name) = natives.get(os_key) {
+                let name = classifier_name.replace("${arch}", arch_bits(arch));
+                if let Some(artifact) = classifiers.get(&name) {
+                    return Some(artifact);
+                }
+            }
+        }
+
+        classifiers.native_for(os, arch)
+    }
+}
+
+impl Classifiers {
+    pub fn get(&self, name: &str) -> Option<&Artifact> {
+        match name {
+            "natives-linux" => self.natives_linux.as_ref(),
+            "natives-windows" => self.natives_windows.as_ref(),
+            "natives-macos" => self.natives_macos.as_ref(),
+            other => self.other.get(other),
+        }
+    }
+
+    pub fn native_for(&self, os: &str, arch: &str) -> Option<&Artifact> {
+        let os_names: &[&str] = match os {
+            "windows" => &["windows"],
+            "linux" => &["linux"],
+            "macos" => &["macos", "osx"],
+            _ => return None,
+        };
+
+        for os_name in os_names {
+            for arch_name in arch_classifier_names(arch) {
+                if let Some(artifact) = self.get(&format!("natives-{}-{}", os_name, arch_name)) {
+                    return Some(artifact);
+                }
+            }
+        }
+
+        for os_name in os_names {
+            if let Some(artifact) = self.get(&format!("natives-{}", os_name)) {
+                return Some(artifact);
+            }
+        }
+
+        None
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -330,4 +453,187 @@ pub struct YggdrasilErrorResponse {
     pub error_message: String,
     #[allow(dead_code)]
     pub cause: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn artifact(path: &str) -> Artifact {
+        Artifact {
+            url: format!("https://example.invalid/{}.jar", path),
+            sha1: "0000000000000000000000000000000000000000".to_string(),
+            path: format!("{}.jar", path),
+            size: Some(1),
+        }
+    }
+
+    fn library_with(
+        classifiers: Classifiers,
+        natives: Option<HashMap<String, String>>,
+    ) -> Library {
+        Library {
+            name: "test:lib:1.0".to_string(),
+            downloads: Some(LibraryDownloads {
+                artifact: Some(artifact("artifact")),
+                classifiers: Some(classifiers),
+            }),
+            rules: None,
+            natives,
+        }
+    }
+
+    fn all_classifiers() -> Classifiers {
+        Classifiers {
+            natives_linux: Some(artifact("linux")),
+            natives_windows: Some(artifact("windows")),
+            natives_macos: Some(artifact("macos")),
+            other: HashMap::from([
+                ("natives-linux-arm64".to_string(), artifact("linux-arm64")),
+                ("natives-windows-arm64".to_string(), artifact("windows-arm64")),
+                ("natives-macos-arm64".to_string(), artifact("macos-arm64")),
+                ("natives-windows-x86".to_string(), artifact("windows-x86")),
+            ]),
+        }
+    }
+
+    fn library_with_rules(rules: Vec<Rule>) -> Library {
+        Library {
+            name: "test:lib:1.0".to_string(),
+            downloads: None,
+            rules: Some(rules),
+            natives: None,
+        }
+    }
+
+    #[test]
+    fn library_without_rules_is_allowed_everywhere() {
+        let library = library_with(all_classifiers(), None);
+
+        assert!(library.is_allowed_for("windows", "x86_64"));
+        assert!(library.is_allowed_for("linux", "aarch64"));
+        assert!(library.is_allowed_for("macos", "x86_64"));
+    }
+
+    #[test]
+    fn library_rule_only_allows_matching_os() {
+        let library = library_with_rules(vec![Rule {
+            action: "allow".to_string(),
+            os: Some(OsRule {
+                name: "windows".to_string(),
+                arch: None,
+            }),
+        }]);
+
+        assert!(library.is_allowed_for("windows", "x86_64"));
+        assert!(!library.is_allowed_for("linux", "x86_64"));
+        assert!(!library.is_allowed_for("macos", "x86_64"));
+    }
+
+    #[test]
+    fn library_rule_respects_arch() {
+        let library = library_with_rules(vec![Rule {
+            action: "allow".to_string(),
+            os: Some(OsRule {
+                name: "windows".to_string(),
+                arch: Some("x86".to_string()),
+            }),
+        }]);
+
+        assert!(library.is_allowed_for("windows", "x86"));
+        assert!(!library.is_allowed_for("windows", "x86_64"));
+    }
+
+    #[test]
+    fn disallow_rule_beats_allow_rule() {
+        let library = library_with_rules(vec![
+            Rule {
+                action: "allow".to_string(),
+                os: None,
+            },
+            Rule {
+                action: "disallow".to_string(),
+                os: Some(OsRule {
+                    name: "linux".to_string(),
+                    arch: None,
+                }),
+            },
+        ]);
+
+        assert!(library.is_allowed_for("windows", "x86_64"));
+        assert!(!library.is_allowed_for("linux", "x86_64"));
+    }
+
+    #[test]
+    fn native_artifact_matches_os() {
+        let library = library_with(all_classifiers(), None);
+
+        assert_eq!(
+            library.native_artifact_for("windows", "x86_64").unwrap().path,
+            "windows.jar"
+        );
+        assert_eq!(
+            library.native_artifact_for("linux", "x86_64").unwrap().path,
+            "linux.jar"
+        );
+        assert_eq!(
+            library.native_artifact_for("macos", "x86_64").unwrap().path,
+            "macos.jar"
+        );
+    }
+
+    #[test]
+    fn native_artifact_selects_arm64_variant() {
+        let library = library_with(all_classifiers(), None);
+
+        assert_eq!(
+            library.native_artifact_for("linux", "aarch64").unwrap().path,
+            "linux-arm64.jar"
+        );
+        assert_eq!(
+            library.native_artifact_for("windows", "aarch64").unwrap().path,
+            "windows-arm64.jar"
+        );
+        assert_eq!(
+            library.native_artifact_for("macos", "aarch64").unwrap().path,
+            "macos-arm64.jar"
+        );
+    }
+
+    #[test]
+    fn native_artifact_selects_32_bit_variant() {
+        let library = library_with(all_classifiers(), None);
+
+        assert_eq!(
+            library.native_artifact_for("windows", "x86").unwrap().path,
+            "windows-x86.jar"
+        );
+    }
+
+    #[test]
+    fn native_artifact_never_returns_another_os() {
+        let mut classifiers = all_classifiers();
+        classifiers.natives_macos = None;
+        classifiers.other.remove("natives-macos-arm64");
+        let library = library_with(classifiers, None);
+
+        assert!(library.native_artifact_for("macos", "x86_64").is_none());
+        assert!(library.native_artifact_for("macos", "aarch64").is_none());
+    }
+
+    #[test]
+    fn native_artifact_honors_legacy_natives_map() {
+        let library = library_with(
+            all_classifiers(),
+            Some(HashMap::from([(
+                "osx".to_string(),
+                "natives-macos".to_string(),
+            )])),
+        );
+
+        assert_eq!(
+            library.native_artifact_for("macos", "x86_64").unwrap().path,
+            "macos.jar"
+        );
+    }
 }
