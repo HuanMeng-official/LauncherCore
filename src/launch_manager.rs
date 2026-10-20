@@ -1,4 +1,4 @@
-use crate::auth::Authenticator;
+use crate::auth::{Authenticator, cache_needs_refresh};
 use crate::install::Installer;
 use crate::launch::Launcher;
 use crate::models::AuthCache;
@@ -292,6 +292,29 @@ impl LauncherManager {
         self.authenticator.perform_full_authentication().await
     }
 
+    pub async fn ensure_fresh_auth_cache(
+        &self,
+        cache: AuthCache,
+    ) -> anyhow::Result<AuthCache> {
+        if !cache_needs_refresh(&cache) {
+            return Ok(cache);
+        }
+
+        let Some(refresh_token) = cache.refresh_token.clone() else {
+            anyhow::bail!(
+                "Microsoft authentication has expired. Please run 'mclc login' again."
+            );
+        };
+
+        println!("Refreshing Microsoft authentication...");
+        let refreshed = self
+            .authenticator
+            .refresh_authentication(&refresh_token)
+            .await?;
+        self.save_auth_cache(&refreshed)?;
+        Ok(refreshed)
+    }
+
     pub fn launch(
         &self,
         version_id: &str,
@@ -379,6 +402,8 @@ mod tests {
                 access_token: "token".to_string(),
                 uuid: "uuid".to_string(),
                 username: "Alice".to_string(),
+                refresh_token: Some("refresh".to_string()),
+                expires_at: Some(u64::MAX),
             })
             .unwrap();
         manager
@@ -389,6 +414,44 @@ mod tests {
             let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "{:?} must not be readable by other users", path);
         }
+    }
+
+    #[tokio::test]
+    async fn fresh_msa_cache_is_returned_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = manager_with_config(temp.path().to_path_buf());
+        let cache = AuthCache {
+            access_token: "token".to_string(),
+            uuid: "uuid".to_string(),
+            username: "Alice".to_string(),
+            refresh_token: Some("refresh".to_string()),
+            expires_at: Some(u64::MAX),
+        };
+
+        let result = manager.ensure_fresh_auth_cache(cache).await.unwrap();
+
+        assert_eq!(result.access_token, "token");
+    }
+
+    #[tokio::test]
+    async fn expired_msa_cache_without_refresh_token_requires_login() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = manager_with_config(temp.path().to_path_buf());
+        let cache = AuthCache {
+            access_token: "token".to_string(),
+            uuid: "uuid".to_string(),
+            username: "Alice".to_string(),
+            refresh_token: None,
+            expires_at: Some(1),
+        };
+
+        let error = manager
+            .ensure_fresh_auth_cache(cache)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("mclc login"));
     }
 
     #[tokio::test]

@@ -113,6 +113,8 @@ async fn main() -> Result<()> {
                 } else {
                     match manager.load_auth_cache()? {
                         Some(auth_cache) => {
+                            let auth_cache =
+                                manager.ensure_fresh_auth_cache(auth_cache).await?;
                             manager.launch(
                                 &version,
                                 auth_cache.username,

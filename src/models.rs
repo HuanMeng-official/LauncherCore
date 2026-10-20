@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 
 // Authentication models
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthCache {
     pub access_token: String,
     pub uuid: String,
     pub username: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,7 +83,6 @@ pub struct MinecraftLoginResponse {
     pub access_token: String,
     #[allow(dead_code)]
     pub token_type: String,
-    #[allow(dead_code)]
     pub expires_in: u64,
 }
 

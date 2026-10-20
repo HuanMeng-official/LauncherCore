@@ -1,5 +1,26 @@
 use crate::models::*;
 use reqwest::Client;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const MSA_REFRESH_MARGIN_SECS: u64 = 300;
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+pub(crate) fn cache_needs_refresh(cache: &AuthCache) -> bool {
+    cache_needs_refresh_at(cache, now_unix())
+}
+
+fn cache_needs_refresh_at(cache: &AuthCache, now: u64) -> bool {
+    match cache.expires_at {
+        Some(expires_at) => now.saturating_add(MSA_REFRESH_MARGIN_SECS) >= expires_at,
+        None => false,
+    }
+}
 
 const MS_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
 const MS_TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
@@ -239,8 +260,54 @@ impl Authenticator {
         Ok(profile)
     }
 
-    pub async fn perform_full_authentication(&self) -> anyhow::Result<AuthCache> {
-        let ms_token_res = self.authenticate_with_msa().await?;
+    async fn refresh_ms_token_at(
+        &self,
+        refresh_token: &str,
+        token_url: &str,
+    ) -> anyhow::Result<MicrosoftTokenResponse> {
+        let client = Client::new();
+        let params = [
+            ("grant_type", "refresh_token"),
+            ("client_id", self.client_id.as_str()),
+            ("refresh_token", refresh_token),
+            ("scope", "XboxLive.signin offline_access"),
+        ];
+        let res = client.post(token_url).form(&params).send().await?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            if body.contains("invalid_grant") {
+                return Err(anyhow::anyhow!(
+                    "Microsoft refresh token is invalid or expired. Please run 'mclc login' again. ({} - {})",
+                    status,
+                    body
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "Failed to refresh Microsoft token: {} - {}",
+                status,
+                body
+            ));
+        }
+
+        Ok(res.json::<MicrosoftTokenResponse>().await?)
+    }
+
+    pub async fn refresh_authentication(
+        &self,
+        refresh_token: &str,
+    ) -> anyhow::Result<AuthCache> {
+        let ms_token_res = self.refresh_ms_token_at(refresh_token, MS_TOKEN_URL).await?;
+        self.complete_authentication(ms_token_res, Some(refresh_token.to_string()))
+            .await
+    }
+
+    async fn complete_authentication(
+        &self,
+        ms_token_res: MicrosoftTokenResponse,
+        previous_refresh_token: Option<String>,
+    ) -> anyhow::Result<AuthCache> {
         let ms_access_token = ms_token_res.access_token;
 
         let (xbl_token, user_hash) = self.get_xbl_token(&ms_access_token).await?;
@@ -263,12 +330,88 @@ impl Authenticator {
             access_token: mc_login_res.access_token,
             uuid: formatted_uuid,
             username: profile.name,
+            refresh_token: ms_token_res.refresh_token.or(previous_refresh_token),
+            expires_at: Some(now_unix().saturating_add(mc_login_res.expires_in)),
         })
+    }
+
+    pub async fn perform_full_authentication(&self) -> anyhow::Result<AuthCache> {
+        let ms_token_res = self.authenticate_with_msa().await?;
+        self.complete_authentication(ms_token_res, None).await
     }
 }
 
 impl Default for Authenticator {
     fn default() -> Self {
         Self::new("YOUR_AZURE_CLIENT_ID".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_http;
+
+    fn cache(expires_at: Option<u64>) -> AuthCache {
+        AuthCache {
+            access_token: "mc-token".to_string(),
+            uuid: "uuid".to_string(),
+            username: "Alice".to_string(),
+            refresh_token: Some("refresh-token".to_string()),
+            expires_at,
+        }
+    }
+
+    #[test]
+    fn cache_refreshes_only_when_expired_or_close() {
+        assert!(!cache_needs_refresh_at(&cache(Some(10_000)), 1_000));
+        assert!(cache_needs_refresh_at(&cache(Some(1_200)), 1_000));
+        assert!(cache_needs_refresh_at(&cache(Some(1_000)), 1_000));
+        assert!(!cache_needs_refresh_at(&cache(None), 1_000));
+    }
+
+    #[test]
+    fn old_cache_without_refresh_fields_still_deserializes() {
+        let cache: AuthCache = serde_json::from_str(
+            r#"{"access_token":"token","uuid":"uuid","username":"Alice"}"#,
+        )
+        .unwrap();
+
+        assert!(cache.refresh_token.is_none());
+        assert!(cache.expires_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn refreshes_microsoft_token_with_refresh_grant() {
+        let body = r#"{
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "XboxLive.signin offline_access",
+            "access_token": "new-ms-token",
+            "refresh_token": "rotated-refresh-token"
+        }"#;
+        let server =
+            test_http::serve_once(test_http::response("200 OK", &[], body.as_bytes())).await;
+        let authenticator = Authenticator::new("client-id".to_string());
+
+        let response = authenticator
+            .refresh_ms_token_at(
+                "old-refresh-token",
+                &format!("{}/token", server.base_url),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.access_token, "new-ms-token");
+        assert_eq!(
+            response.refresh_token.as_deref(),
+            Some("rotated-refresh-token")
+        );
+
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests[0].method, "POST");
+        assert!(requests[0].body.contains("grant_type=refresh_token"));
+        assert!(requests[0].body.contains("refresh_token=old-refresh-token"));
+        assert!(requests[0].body.contains("client_id=client-id"));
     }
 }

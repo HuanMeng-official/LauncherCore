@@ -21,6 +21,7 @@
 - **Native Library Management**: Applies version rules and downloads/extracts only the natives for the current OS and architecture
 - **Manifest-Driven Arguments**: Uses each version's `arguments` (with OS/architecture rules) and falls back to legacy `minecraftArguments`
 - **Authentication Support**: Offline, Microsoft account, and external Yggdrasil (authlib-injector) authentication
+- **Automatic MSA Refresh**: Stores the Microsoft refresh token and Minecraft token expiry, and renews credentials before launch when needed
 - **Multi-Account Support**: Stores multiple external accounts and refreshes expired tokens
 - **Credential Protection**: Access tokens are redacted from launch logs; on Unix, credential files are written with `0600` permissions
 - **Custom JVM Arguments**: Pass custom JVM arguments for performance tuning
@@ -148,6 +149,7 @@ mclc list
    - Configures native library paths
    - Evaluates the version manifest's JVM and game arguments, including OS/architecture rules and placeholders
    - Falls back to legacy `minecraftArguments` for older versions
+   - Refreshes cached Microsoft credentials automatically when they are close to expiring
    - Redacts secrets such as the access token from the printed command
    - Launches the Minecraft client with Java
 
@@ -160,7 +162,8 @@ mclc list
 5. Exchanges Xbox Live token for XSTS token
 6. Authenticates with Minecraft services
 7. Retrieves Minecraft profile (UUID, username)
-8. Caches `access_token`, `uuid`, and `username` for future launches
+8. Caches `access_token`, `uuid`, `username`, the Microsoft `refresh_token`, and the token expiry time
+9. Before a later launch, renews the Microsoft token and Minecraft credentials automatically when the cached token is close to expiring; if renewal fails, run `mclc login` again
 
 ### Authentication Flow (External Yggdrasil)
 
@@ -262,6 +265,7 @@ mclc launch 1.21.3 --username Player --runtime "C:\Program Files\Java\jdk-21\bin
 1. Ensure you have an Xbox account linked to your Microsoft account
 2. Child accounts may need to be added to a family by an adult
 3. Your account must be in a region where Xbox Live is available
+4. If the cached token can no longer be refreshed, run `mclc login` again
 
 ### External login issues?
 
