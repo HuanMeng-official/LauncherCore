@@ -22,6 +22,7 @@
 - **版本参数驱动**：读取版本 manifest 的 `arguments`（含系统/架构规则），并为旧版本回退到 `minecraftArguments`
 - **认证支持**：支持离线、微软账户和外置 Yggdrasil（authlib-injector）认证
 - **微软令牌自动刷新**：保存微软 refresh token 和 Minecraft 令牌过期时间，启动前按需自动续期
+- **标准离线 UUID**：离线模式按 Java 的 `OfflinePlayer:<名称>` 规则生成 UUID
 - **多账号支持**：可保存多个外置账号，并在令牌过期时自动刷新
 - **凭据保护**：启动日志会隐藏访问令牌；Unix 下凭据文件使用 `0600` 权限
 - **自定义 JVM 参数**：支持传入自定义 JVM 参数进行性能调优
@@ -150,6 +151,7 @@ mclc list
    - 解析版本 manifest 的 JVM 和游戏参数，包括系统/架构规则与占位符
    - 为旧版本回退到 `minecraftArguments`
    - 缓存的微软凭据临近过期时自动刷新
+   - 离线模式下按用户名生成标准离线 UUID
    - 在打印的命令中隐藏访问令牌等敏感信息
    - 使用 Java 启动 Minecraft 客户端
 

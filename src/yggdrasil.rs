@@ -2,6 +2,7 @@ use crate::models::*;
 use anyhow::Context;
 use base64::Engine as _;
 use futures_util::StreamExt;
+use md5::Md5;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -15,6 +16,32 @@ pub use crate::models::YggdrasilProfile;
 
 const AUTHLIB_INJECTOR_API_BASE: &str = "https://authlib-injector.yushi.moe";
 const AUTHLIB_INJECTOR_API_MIRROR: &str = "https://bmclapi2.bangbang93.com/mirrors/authlib-injector";
+
+/// Returns the standard Java offline-mode UUID for a username.
+pub(crate) fn offline_uuid(username: &str) -> String {
+    let mut hasher = Md5::new();
+    hasher.update(format!("OfflinePlayer:{}", username).as_bytes());
+    let digest = hasher.finalize();
+
+    let mut bytes = [0u8; 16];
+    for (target, source) in bytes.iter_mut().zip(digest.iter()) {
+        *target = *source;
+    }
+
+    // Match java.util.UUID.nameUUIDFromBytes: version 3, RFC 4122 variant.
+    bytes[6] = (bytes[6] & 0x0f) | 0x30;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    let hex: String = bytes.iter().map(|byte| format!("{:02x}", byte)).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
 
 /// Returns the formatted UUID with dashes
 pub(crate) fn format_uuid(uuid: &str) -> String {
@@ -486,6 +513,18 @@ mod tests {
             download_url, sha256
         );
         test_http::serve_once(test_http::response("200 OK", &[], body.as_bytes())).await
+    }
+
+    #[test]
+    fn offline_uuid_matches_java_offline_player_uuid() {
+        assert_eq!(
+            offline_uuid("Notch"),
+            "b50ad385-829d-3141-a216-7e7d7539ba7f"
+        );
+        assert_eq!(
+            offline_uuid("Player"),
+            "a01e3843-e521-3998-958a-f459800e4d11"
+        );
     }
 
     #[tokio::test]

@@ -22,6 +22,7 @@
 - **Manifest-Driven Arguments**: Uses each version's `arguments` (with OS/architecture rules) and falls back to legacy `minecraftArguments`
 - **Authentication Support**: Offline, Microsoft account, and external Yggdrasil (authlib-injector) authentication
 - **Automatic MSA Refresh**: Stores the Microsoft refresh token and Minecraft token expiry, and renews credentials before launch when needed
+- **Standard Offline UUID**: Derives the Java-compatible `OfflinePlayer:<name>` UUID for offline mode
 - **Multi-Account Support**: Stores multiple external accounts and refreshes expired tokens
 - **Credential Protection**: Access tokens are redacted from launch logs; on Unix, credential files are written with `0600` permissions
 - **Custom JVM Arguments**: Pass custom JVM arguments for performance tuning
@@ -150,6 +151,7 @@ mclc list
    - Evaluates the version manifest's JVM and game arguments, including OS/architecture rules and placeholders
    - Falls back to legacy `minecraftArguments` for older versions
    - Refreshes cached Microsoft credentials automatically when they are close to expiring
+   - Derives the standard offline UUID from the username in offline mode
    - Redacts secrets such as the access token from the printed command
    - Launches the Minecraft client with Java
 

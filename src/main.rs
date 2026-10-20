@@ -16,7 +16,7 @@ use cli::{AuthType, Cli, Commands};
 use error::LauncherError;
 use launch_manager::LauncherManager;
 use yggdrasil::{
-    YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, format_uuid,
+    YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, format_uuid, offline_uuid,
 };
 
 fn resolve_password(cli_password: Option<&str>) -> Result<String> {
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
             AuthType::Offline => {
                 let launch_username = username.clone().unwrap_or_else(|| "Player".to_string());
                 let launch_access_token = access_token.clone().unwrap_or_else(|| "0".to_string());
-                let launch_uuid = "00000000-0000-0000-0000-000000000000".to_string();
+                let launch_uuid = offline_uuid(&launch_username);
 
                 manager.launch(
                     &version,
