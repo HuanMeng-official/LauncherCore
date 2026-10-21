@@ -1,4 +1,6 @@
-use crate::models::*;
+pub mod yggdrasil;
+
+use crate::common::models::*;
 use reqwest::Client;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -65,7 +67,7 @@ impl Authenticator {
         }
 
         let device_code_res: DeviceCodeResponse = res.json().await?;
-        crate::output::device_code(&device_code_res);
+        crate::common::output::device_code(&device_code_res);
 
         let poll_params = [
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),

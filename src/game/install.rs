@@ -1,5 +1,5 @@
-use crate::download::{self, DownloadSource};
-use crate::models::*;
+use crate::net::download::{self, DownloadSource};
+use crate::common::models::*;
 use anyhow::Context;
 use futures_util::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -17,7 +17,7 @@ const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net";
 const MAVEN_BASE_URL: &str = "https://repo1.maven.org/maven2";
 const MAX_CONCURRENT_DOWNLOADS: usize = 16;
 
-fn manifest_has_linux_arm64_native(library: &crate::models::Library) -> bool {
+fn manifest_has_linux_arm64_native(library: &crate::common::models::Library) -> bool {
     if let Some(classifier) = library.name.split(':').nth(3) {
         if classifier == "natives-linux-arm64" || classifier == "natives-linux-aarch64" {
             return true;
@@ -137,7 +137,7 @@ impl Installer {
     /// Downloads all files required by an already-written version JSON,
     /// following `inheritsFrom` when present.
     pub async fn install_loaded_version(&self, version_id: &str) -> anyhow::Result<()> {
-        let version_details = crate::version::load_version_details(&self.versions_dir, version_id)?;
+        let version_details = crate::game::version::load_version_details(&self.versions_dir, version_id)?;
         let version_dir = self.versions_dir.join(version_id);
         fs::create_dir_all(&version_dir)?;
 
@@ -202,7 +202,7 @@ impl Installer {
 
         if !first_phase_tasks.is_empty() {
             crate::outln!("Downloading metadata...");
-            crate::output::progress("metadata", 0, 0, "Downloading metadata");
+            crate::common::output::progress("metadata", 0, 0, "Downloading metadata");
             let client = Arc::new(client);
             let source = self.source;
             let results = stream::iter(first_phase_tasks)
@@ -281,7 +281,7 @@ impl Installer {
         }
 
         // Create progress bar (hidden in JSON mode; progress is emitted as events)
-        let pb = Arc::new(if crate::output::is_json() {
+        let pb = Arc::new(if crate::common::output::is_json() {
             ProgressBar::hidden()
         } else {
             ProgressBar::new(tasks.len() as u64)
@@ -290,7 +290,7 @@ impl Installer {
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
             .unwrap()
             .progress_chars("#>-"));
-        crate::output::progress("downloads", 0, tasks.len() as u64, "Downloading files");
+        crate::common::output::progress("downloads", 0, tasks.len() as u64, "Downloading files");
 
         // Download all files concurrently
         let client = Arc::new(client);
@@ -316,7 +316,7 @@ impl Installer {
                     if result.is_ok() {
                         let downloaded = counter.fetch_add(1, Ordering::SeqCst) + 1;
                         pb.set_position(downloaded);
-                        crate::output::progress(
+                        crate::common::output::progress(
                             "downloads",
                             downloaded,
                             pb.length().unwrap_or(0),
@@ -357,13 +357,13 @@ impl Installer {
         // Extract native libraries
         let total_extract = extraction_tasks.len() as u64;
         if total_extract > 0 {
-            crate::output::progress("extract", 0, total_extract, "Extracting native libraries");
+            crate::common::output::progress("extract", 0, total_extract, "Extracting native libraries");
         }
         for (index, (jar_path, extract_dir)) in extraction_tasks.into_iter().enumerate() {
             if jar_path.exists() {
                 self.extract_lwjgl3_native_library(&jar_path, &extract_dir)?;
             }
-            crate::output::progress(
+            crate::common::output::progress(
                 "extract",
                 index as u64 + 1,
                 total_extract,
@@ -605,7 +605,7 @@ impl Installer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::VersionDetails;
+    use crate::common::models::VersionDetails;
     use crate::test_http;
     use sha1::{Digest, Sha1};
 
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn arm64_workaround_only_skips_when_manifest_has_arm64_native() {
-        let with_arm64: crate::models::Library = serde_json::from_str(
+        let with_arm64: crate::common::models::Library = serde_json::from_str(
             r#"{
                 "name": "org.lwjgl:lwjgl:3.3.3",
                 "downloads": {
@@ -785,7 +785,7 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let without_arm64: crate::models::Library = serde_json::from_str(
+        let without_arm64: crate::common::models::Library = serde_json::from_str(
             r#"{
                 "name": "org.lwjgl:lwjgl:3.3.3",
                 "downloads": {
@@ -800,7 +800,7 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let embedded_arm64: crate::models::Library = serde_json::from_str(
+        let embedded_arm64: crate::common::models::Library = serde_json::from_str(
             r#"{
                 "name": "org.lwjgl:lwjgl:3.3.3:natives-linux-arm64",
                 "downloads": {

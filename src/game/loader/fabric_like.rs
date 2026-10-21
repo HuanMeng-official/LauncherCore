@@ -2,8 +2,8 @@
 //! same shape. Loader-specific endpoints and profile options live in
 //! `fabric.rs` and `quilt.rs`.
 
-use crate::download;
-use crate::install::Installer;
+use crate::net::download;
+use crate::game::install::Installer;
 use serde::Deserialize;
 use std::fs;
 

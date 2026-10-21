@@ -10,7 +10,7 @@ mod installer;
 mod neoforge;
 mod quilt;
 
-use crate::install::Installer;
+use crate::game::install::Installer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum LoaderKind {
@@ -43,7 +43,7 @@ pub async fn install_loader(
         kind.label(),
         game_version
     );
-    crate::output::progress(
+    crate::common::output::progress(
         "loader",
         0,
         0,
@@ -71,6 +71,6 @@ pub async fn install_loader(
         version_id
     );
     crate::outln!("Launch with: mclc launch {}", version_id);
-    crate::output::progress("loader", 1, 1, format!("Installed {}", version_id));
+    crate::common::output::progress("loader", 1, 1, format!("Installed {}", version_id));
     Ok(version_id)
 }

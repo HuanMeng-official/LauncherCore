@@ -339,31 +339,40 @@ mclc web --port 7420 --token <token>
 ```
 LauncherCore/
 ├── src/
-│   ├── main.rs           # 主入口
-│   ├── cli.rs            # CLI 参数定义
-│   ├── commands.rs       # 共享的安装与启动命令逻辑
-│   ├── output.rs         # 人类可读/JSON 输出抽象
-│   ├── json_server.rs    # 常驻 NDJSON 通信服务
-│   ├── web_server.rs     # 面向浏览器前端的本地 WebSocket 后端
-│   ├── install.rs        # 版本安装与文件下载
-│   ├── download.rs       # 下载源、URL 映射与重试
-│   ├── version.rs        # 版本 JSON 继承与合并
-│   ├── loader.rs         # 加载器分发与共享类型
-│   ├── loader/
-│   │   ├── fabric_like.rs # Fabric/Quilt 共享元数据与版本配置逻辑
-│   │   ├── fabric.rs      # Fabric 安装
-│   │   ├── quilt.rs       # Quilt 安装
-│   │   ├── forge.rs       # Forge 版本解析与安装
-│   │   ├── neoforge.rs    # NeoForge 版本解析与安装
-│   │   └── installer.rs   # 共享的加载器安装器下载与执行
-│   ├── launch.rs         # 启动参数组装与进程执行
-│   ├── launch_manager.rs # 启动配置和账号存储
-│   ├── java.rs           # Java 运行时检测和选择
-│   ├── auth.rs           # 微软账户认证
-│   ├── yggdrasil.rs      # 外置 Yggdrasil 认证和 authlib-injector
-│   ├── models.rs         # 数据模型和 JSON 结构
-│   ├── error.rs          # 错误类型
-│   └── test_http.rs      # HTTP 测试辅助模块（仅测试构建）
+│   ├── main.rs               # 主入口
+│   ├── cli.rs                # CLI 参数定义
+│   ├── commands.rs           # 共享的安装与启动命令逻辑
+│   ├── common.rs             # 共享模块声明
+│   ├── common/
+│   │   ├── error.rs          # 错误类型
+│   │   ├── models.rs         # 数据模型和 JSON 结构
+│   │   └── output.rs         # 人类可读/JSON 输出抽象
+│   ├── auth.rs               # 微软账户认证
+│   ├── auth/
+│   │   └── yggdrasil.rs      # 外置 Yggdrasil 认证和 authlib-injector
+│   ├── game.rs               # 游戏模块声明
+│   ├── game/
+│   │   ├── install.rs        # 版本安装与文件下载
+│   │   ├── java.rs           # Java 运行时检测和选择
+│   │   ├── launch.rs         # 启动参数组装与进程执行
+│   │   ├── launch_manager.rs # 启动配置和账号存储
+│   │   ├── version.rs        # 版本 JSON 继承与合并
+│   │   ├── loader.rs         # 加载器分发与共享类型
+│   │   └── loader/
+│   │       ├── fabric_like.rs # Fabric/Quilt 共享元数据与版本配置逻辑
+│   │       ├── fabric.rs      # Fabric 安装
+│   │       ├── quilt.rs       # Quilt 安装
+│   │       ├── forge.rs       # Forge 版本解析与安装
+│   │       ├── neoforge.rs    # NeoForge 版本解析与安装
+│   │       └── installer.rs   # 共享的加载器安装器下载与执行
+│   ├── net.rs                # 网络模块声明
+│   ├── net/
+│   │   └── download.rs       # 下载源、URL 映射与重试
+│   ├── server.rs             # 服务模块声明
+│   ├── server/
+│   │   ├── json.rs           # 常驻 NDJSON 通信服务
+│   │   └── web.rs            # 面向浏览器前端的本地 WebSocket 后端
+│   └── test_http.rs          # HTTP 测试辅助模块（仅测试构建）
 ├── README/
 │   ├── README_zh_CN.md        # 简体中文文档（本文件）
 │   └── INTEGRATION_zh_CN.md   # 简体中文接入指南

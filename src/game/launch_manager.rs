@@ -1,10 +1,10 @@
 use crate::auth::{Authenticator, cache_needs_refresh};
-use crate::download::DownloadSource;
-use crate::install::Installer;
-use crate::launch::Launcher;
-use crate::loader::LoaderKind;
-use crate::models::AuthCache;
-use crate::yggdrasil::{
+use crate::net::download::DownloadSource;
+use crate::game::install::Installer;
+use crate::game::launch::Launcher;
+use crate::game::loader::LoaderKind;
+use crate::common::models::AuthCache;
+use crate::auth::yggdrasil::{
     AuthlibInjector, YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, select_profile,
 };
 use std::fs;
@@ -306,7 +306,7 @@ impl LauncherManager {
         loader_version: Option<&str>,
         java_path_override: Option<String>,
     ) -> anyhow::Result<String> {
-        crate::loader::install_loader(
+        crate::game::loader::install_loader(
             &self.installer,
             kind,
             game_version,

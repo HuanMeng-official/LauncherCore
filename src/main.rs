@@ -1,26 +1,18 @@
 mod auth;
 mod cli;
 mod commands;
-mod download;
-mod error;
-mod install;
-mod java;
-mod json_server;
-mod launch;
-mod launch_manager;
-mod loader;
-mod models;
-mod output;
+mod common;
+mod game;
+mod net;
+mod server;
 #[cfg(test)]
 mod test_http;
-mod version;
-mod web_server;
-mod yggdrasil;
 
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
-use launch_manager::LauncherManager;
+use game::java;
+use game::launch_manager::LauncherManager;
 
 fn resolve_password(cli_password: Option<&str>) -> Result<String> {
     if let Some(password) = cli_password {
@@ -51,7 +43,7 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Json => {
-            json_server::run(manager, global_java_path).await?;
+            server::json::run(manager, global_java_path).await?;
         }
         Commands::Web {
             port,
@@ -59,8 +51,8 @@ async fn main() -> Result<()> {
             token,
             allow_origins,
         } => {
-            web_server::run(
-                web_server::WebOptions {
+            server::web::run(
+                server::web::WebOptions {
                     host: host.clone(),
                     port: *port,
                     token: token.clone(),

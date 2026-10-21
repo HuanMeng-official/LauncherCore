@@ -1,7 +1,7 @@
 //! Fabric loader installation from the Fabric metadata API.
 
 use super::fabric_like::{self, ProfileOptions, Selection};
-use crate::install::Installer;
+use crate::game::install::Installer;
 
 pub(super) async fn install(
     installer: &Installer,
@@ -151,7 +151,7 @@ mod tests {
             "-DFabricMcEmu= net.minecraft.client.main.Main "
         );
 
-        let details: crate::models::VersionDetails =
+        let details: crate::common::models::VersionDetails =
             serde_json::from_value(profile.clone()).unwrap();
         assert_eq!(details.id, "fabric-loader-0.20.1-1.21.1");
         assert_eq!(details.inherits_from.as_deref(), Some("1.21.1"));

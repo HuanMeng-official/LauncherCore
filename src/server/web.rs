@@ -4,7 +4,7 @@
 //! JSON server, owns its stdio, multiplexes requests from one or more
 //! WebSocket clients, and keeps the launcher protocol unchanged on the wire.
 
-use crate::download::DownloadSource;
+use crate::net::download::DownloadSource;
 use anyhow::Context;
 use axum::Router;
 use axum::extract::State;

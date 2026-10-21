@@ -1,8 +1,8 @@
 use crate::auth::Authenticator;
 use crate::cli::AuthType;
-use crate::launch_manager::LauncherManager;
-use crate::loader::LoaderKind;
-use crate::yggdrasil::{
+use crate::game::launch_manager::LauncherManager;
+use crate::game::loader::LoaderKind;
+use crate::auth::yggdrasil::{
     YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, format_uuid, offline_uuid,
 };
 use anyhow::Context;

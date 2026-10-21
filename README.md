@@ -339,31 +339,40 @@ This list is not a compatibility guarantee; Minecraft, loader, and Java versions
 ```
 LauncherCore/
 ├── src/
-│   ├── main.rs           # Main entry point
-│   ├── cli.rs            # CLI argument definitions
-│   ├── commands.rs       # Shared install and launch command logic
-│   ├── output.rs         # Human/JSON output abstraction
-│   ├── json_server.rs    # Persistent NDJSON communication server
-│   ├── web_server.rs     # Local WebSocket backend for browser frontends
-│   ├── install.rs        # Version installation and file downloads
-│   ├── download.rs       # Download sources, URL mapping, and retry logic
-│   ├── version.rs        # Version JSON inheritance and merging
-│   ├── loader.rs         # Loader dispatch and shared loader types
-│   ├── loader/
-│   │   ├── fabric_like.rs # Shared Fabric/Quilt metadata and profile plumbing
-│   │   ├── fabric.rs      # Fabric installation
-│   │   ├── quilt.rs       # Quilt installation
-│   │   ├── forge.rs       # Forge version resolution and installation
-│   │   ├── neoforge.rs    # NeoForge version resolution and installation
-│   │   └── installer.rs   # Shared loader-installer download and execution
-│   ├── launch.rs         # Launch argument assembly and process execution
-│   ├── launch_manager.rs # Launcher configuration and account storage
-│   ├── java.rs           # Java runtime detection and selection
-│   ├── auth.rs           # Microsoft account authentication
-│   ├── yggdrasil.rs      # External Yggdrasil auth and authlib-injector
-│   ├── models.rs         # Data models and JSON structures
-│   ├── error.rs          # Error types
-│   └── test_http.rs      # HTTP test helper (test builds only)
+│   ├── main.rs               # Main entry point
+│   ├── cli.rs                # CLI argument definitions
+│   ├── commands.rs           # Shared install and launch command logic
+│   ├── common.rs             # Shared module declarations
+│   ├── common/
+│   │   ├── error.rs          # Error types
+│   │   ├── models.rs         # Data models and JSON structures
+│   │   └── output.rs         # Human/JSON output abstraction
+│   ├── auth.rs               # Microsoft account authentication
+│   ├── auth/
+│   │   └── yggdrasil.rs      # External Yggdrasil auth and authlib-injector
+│   ├── game.rs               # Game module declarations
+│   ├── game/
+│   │   ├── install.rs        # Version installation and file downloads
+│   │   ├── java.rs           # Java runtime detection and selection
+│   │   ├── launch.rs         # Launch argument assembly and process execution
+│   │   ├── launch_manager.rs # Launcher configuration and account storage
+│   │   ├── version.rs        # Version JSON inheritance and merging
+│   │   ├── loader.rs         # Loader dispatch and shared loader types
+│   │   └── loader/
+│   │       ├── fabric_like.rs # Shared Fabric/Quilt metadata and profile plumbing
+│   │       ├── fabric.rs      # Fabric installation
+│   │       ├── quilt.rs       # Quilt installation
+│   │       ├── forge.rs       # Forge version resolution and installation
+│   │       ├── neoforge.rs    # NeoForge version resolution and installation
+│   │       └── installer.rs   # Shared loader-installer download and execution
+│   ├── net.rs                # Network module declarations
+│   ├── net/
+│   │   └── download.rs       # Download sources, URL mapping, and retry logic
+│   ├── server.rs             # Server module declarations
+│   ├── server/
+│   │   ├── json.rs           # Persistent NDJSON communication server
+│   │   └── web.rs            # Local WebSocket backend for browser frontends
+│   └── test_http.rs          # HTTP test helper (test builds only)
 ├── README/
 │   ├── README_zh_CN.md        # Simplified Chinese documentation
 │   └── INTEGRATION_zh_CN.md   # Simplified Chinese integration guide

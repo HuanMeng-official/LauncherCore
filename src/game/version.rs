@@ -1,4 +1,4 @@
-use crate::models::{Arguments, Library, VersionDetails};
+use crate::common::models::{Arguments, Library, VersionDetails};
 use anyhow::Context;
 use std::collections::HashSet;
 use std::fs;

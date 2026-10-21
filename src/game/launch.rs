@@ -1,5 +1,5 @@
-use crate::java::select_java;
-use crate::models::VersionDetails;
+use crate::game::java::select_java;
+use crate::common::models::VersionDetails;
 use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -74,7 +74,7 @@ fn rule_matches(rule: &serde_json::Value, ctx: &ArgumentContext) -> bool {
         }
 
         if let Some(arch) = os.get("arch").and_then(|value| value.as_str()) {
-            if arch != crate::models::normalize_arch(ctx.arch) {
+            if arch != crate::common::models::normalize_arch(ctx.arch) {
                 return false;
             }
         }
@@ -346,7 +346,7 @@ impl Launcher {
             return Err(anyhow::anyhow!("Version {} not found", version_id));
         }
 
-        let version_details = crate::version::load_version_details(&self.versions_dir, version_id)?;
+        let version_details = crate::game::version::load_version_details(&self.versions_dir, version_id)?;
 
         let required_java = version_details
             .java_version
@@ -418,7 +418,7 @@ impl Launcher {
 
         // In JSON mode the game must not share the protocol's stdio pipes.
         // A detached game that inherited stdin could also consume requests.
-        if crate::output::is_json() {
+        if crate::common::output::is_json() {
             cmd.stdin(std::process::Stdio::null());
             cmd.stdout(std::process::Stdio::null());
             cmd.stderr(std::process::Stdio::null());
@@ -448,7 +448,7 @@ impl Launcher {
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
         let natives =
-            crate::models::selected_native_artifacts(&version_details.libraries, os, arch);
+            crate::common::models::selected_native_artifacts(&version_details.libraries, os, arch);
         let mut needs_extraction = false;
 
         for artifact in &natives {

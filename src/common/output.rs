@@ -91,7 +91,7 @@ pub fn progress(phase: &str, current: u64, total: u64, message: impl Into<String
     }
 }
 
-pub fn device_code(code: &crate::models::DeviceCodeResponse) {
+pub fn device_code(code: &crate::common::models::DeviceCodeResponse) {
     if is_json() {
         write_event(json!({
             "type": "device_code",
@@ -105,7 +105,7 @@ pub fn device_code(code: &crate::models::DeviceCodeResponse) {
     }
 }
 
-pub fn profiles(profiles: &[crate::models::YggdrasilProfile]) {
+pub fn profiles(profiles: &[crate::common::models::YggdrasilProfile]) {
     if is_json() {
         write_event(json!({
             "type": "profiles",
@@ -117,13 +117,13 @@ pub fn profiles(profiles: &[crate::models::YggdrasilProfile]) {
 #[macro_export]
 macro_rules! outln {
     ($($arg:tt)*) => {
-        $crate::output::info(format!($($arg)*))
+        $crate::common::output::info(format!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! outwarn {
     ($($arg:tt)*) => {
-        $crate::output::warn(format!($($arg)*))
+        $crate::common::output::warn(format!($($arg)*))
     };
 }

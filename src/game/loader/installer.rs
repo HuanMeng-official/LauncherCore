@@ -1,7 +1,7 @@
 //! Shared download, verification, and execution for loader installers.
 
-use crate::download;
-use crate::install::Installer;
+use crate::net::download;
+use crate::game::install::Installer;
 use anyhow::Context;
 use std::fs;
 use std::io::Read;
@@ -38,8 +38,8 @@ pub(super) async fn run_installer(
     download::download_file(client, &urls, &installer_path, Some(&expected_sha1), None).await?;
 
     let version_id = read_embedded_version_id(&installer_path)?;
-    let parent = crate::version::load_version_details(&installer.versions_dir, game_version)?;
-    let java = crate::java::select_java(
+    let parent = crate::game::version::load_version_details(&installer.versions_dir, game_version)?;
+    let java = crate::game::java::select_java(
         parent.java_version.as_ref().map(|java| java.major_version),
         java_path_override,
     )?;
@@ -47,9 +47,9 @@ pub(super) async fn run_installer(
     ensure_launcher_profiles(&installer.game_dir, game_version)?;
 
     crate::outln!("Running the {} installer...", version_id);
-    crate::output::progress("loader_install", 0, 1, "Running loader installer");
+    crate::common::output::progress("loader_install", 0, 1, "Running loader installer");
 
-    if crate::output::is_json() {
+    if crate::common::output::is_json() {
         let output = installer_command(&java, &installer_path, &installer.game_dir)
             .output()
             .with_context(|| format!("Failed to run the installer with Java {}", java.display()))?;
@@ -69,7 +69,7 @@ pub(super) async fn run_installer(
             anyhow::bail!("Loader installer exited with {}", status);
         }
     }
-    crate::output::progress("loader_install", 1, 1, "Loader installer finished");
+    crate::common::output::progress("loader_install", 1, 1, "Loader installer finished");
 
     let version_json = installer
         .versions_dir

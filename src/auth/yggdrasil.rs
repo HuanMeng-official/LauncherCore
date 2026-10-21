@@ -1,4 +1,4 @@
-use crate::models::*;
+use crate::common::models::*;
 use anyhow::Context;
 use base64::Engine as _;
 use futures_util::StreamExt;
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 // Re-export YggdrasilProfile for use in main.rs
-pub use crate::models::YggdrasilProfile;
+pub use crate::common::models::YggdrasilProfile;
 
 const AUTHLIB_INJECTOR_API_BASE: &str = "https://authlib-injector.yushi.moe";
 const AUTHLIB_INJECTOR_API_MIRROR: &str =
@@ -453,7 +453,7 @@ impl AuthlibInjector {
         }
 
         crate::outln!("Downloading authlib-injector from: {}", latest.download_url);
-        crate::output::progress("authlib", 0, 0, "Downloading authlib-injector");
+        crate::common::output::progress("authlib", 0, 0, "Downloading authlib-injector");
         fs::create_dir_all(&self.cache_dir)
             .with_context(|| format!("Failed to create directory: {:?}", self.cache_dir))?;
 
@@ -485,7 +485,7 @@ impl AuthlibInjector {
                     total_bytes,
                     downloaded as f64 / total_bytes as f64 * 100.0
                 );
-                crate::output::progress(
+                crate::common::output::progress(
                     "authlib",
                     downloaded,
                     total_bytes,
@@ -514,7 +514,7 @@ impl AuthlibInjector {
             .map_err(|error| anyhow::anyhow!("Failed to save authlib-injector.jar: {}", error))?;
 
         crate::outln!("authlib-injector.jar downloaded successfully");
-        crate::output::progress("authlib", 1, 1, "authlib-injector downloaded");
+        crate::common::output::progress("authlib", 1, 1, "authlib-injector downloaded");
         Ok(jar_path)
     }
 }

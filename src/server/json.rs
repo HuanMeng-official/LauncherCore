@@ -3,14 +3,14 @@
 //! Requests are read from stdin as one JSON object per line. Responses, logs,
 //! progress, and interactive events are written to stdout as one JSON object
 //! per line. Human-readable output from the rest of the launcher is routed
-//! through `crate::output`, so it never corrupts the protocol stream.
+//! through `crate::common::output`, so it never corrupts the protocol stream.
 
 use crate::cli::AuthType;
 use crate::commands::{self, LaunchOptions};
-use crate::download::DownloadSource;
-use crate::launch_manager::LauncherManager;
-use crate::loader::LoaderKind;
-use crate::output;
+use crate::net::download::DownloadSource;
+use crate::game::launch_manager::LauncherManager;
+use crate::game::loader::LoaderKind;
+use crate::common::output;
 use anyhow::Context;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -150,7 +150,7 @@ async fn dispatch(
         "ping" => Ok(json!({ "pong": true })),
 
         "java.list" => {
-            let runtimes = crate::java::detect_java_runtimes();
+            let runtimes = crate::game::java::detect_java_runtimes();
             let runtimes: Vec<Value> = runtimes
                 .iter()
                 .map(|runtime| {

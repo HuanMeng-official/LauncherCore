@@ -1,5 +1,5 @@
-use crate::download::DownloadSource;
-use crate::loader::LoaderKind;
+use crate::net::download::DownloadSource;
+use crate::game::loader::LoaderKind;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]

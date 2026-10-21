@@ -1,7 +1,7 @@
 //! Quilt loader installation from the Quilt metadata API.
 
 use super::fabric_like::{self, ProfileOptions, Selection};
-use crate::install::Installer;
+use crate::game::install::Installer;
 
 pub(super) async fn install(
     installer: &Installer,
@@ -106,7 +106,7 @@ mod tests {
         assert_eq!(profile["libraries"].as_array().unwrap().len(), 4);
         assert!(profile["arguments"].get("jvm").is_none());
 
-        let details: crate::models::VersionDetails = serde_json::from_value(profile).unwrap();
+        let details: crate::common::models::VersionDetails = serde_json::from_value(profile).unwrap();
         assert_eq!(details.id, "quilt-loader-0.20.0-beta.9-1.21.1");
         assert_eq!(details.inherits_from.as_deref(), Some("1.21.1"));
     }
