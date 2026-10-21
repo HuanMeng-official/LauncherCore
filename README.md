@@ -46,6 +46,10 @@ cargo build --release
 
 The executable is written to `target/release/mclc` (`target/release/mclc.exe` on Windows).
 
+### Windows Icon
+
+`assets/icon.ico` is embedded into the executable by `build.rs`; no extra install step is required.
+
 ## Usage
 
 ```
@@ -373,10 +377,13 @@ LauncherCore/
 │   │   ├── json.rs           # Persistent NDJSON communication server
 │   │   └── web.rs            # Local WebSocket backend for browser frontends
 │   └── test_http.rs          # HTTP test helper (test builds only)
+├── assets/
+│   └── icon.ico              # Windows executable icon
 ├── README/
 │   ├── README_zh_CN.md        # Simplified Chinese documentation
 │   └── INTEGRATION_zh_CN.md   # Simplified Chinese integration guide
 ├── INTEGRATION.md        # JSON integration guide
+├── build.rs              # Windows icon/resource embedding
 ├── Cargo.toml            # Project configuration and dependencies
 ├── Cargo.lock            # Locked dependency versions
 └── README.md             # This file
@@ -403,6 +410,7 @@ LauncherCore/
 - `sha2` - authlib-injector integrity verification
 - `rpassword` - Hidden password input
 - `md-5` - Java-compatible offline UUID derivation
+- `winresource` - Windows executable icon and version resources (build only)
 
 ## Game and Configuration Directories
 

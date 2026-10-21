@@ -24,3 +24,6 @@ sha2 = "0.11.1"
 rpassword = "7.5.4"
 md-5 = "0.11.0"
 axum = { version = "0.8.9", features = ["ws"] }
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1.34"

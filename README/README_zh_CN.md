@@ -46,6 +46,10 @@ cargo build --release
 
 构建完成后，可执行文件位于 `target/release/mclc`（Windows 上为 `target/release/mclc.exe`）。
 
+### Windows 图标
+
+`build.rs` 会把 `assets/icon.ico` 嵌入可执行文件，无需额外安装步骤。
+
 ## 使用方法
 
 ```
@@ -373,10 +377,13 @@ LauncherCore/
 │   │   ├── json.rs           # 常驻 NDJSON 通信服务
 │   │   └── web.rs            # 面向浏览器前端的本地 WebSocket 后端
 │   └── test_http.rs          # HTTP 测试辅助模块（仅测试构建）
+├── assets/
+│   └── icon.ico              # Windows 可执行文件图标
 ├── README/
 │   ├── README_zh_CN.md        # 简体中文文档（本文件）
 │   └── INTEGRATION_zh_CN.md   # 简体中文接入指南
 ├── INTEGRATION.md        # JSON 接入指南（英文）
+├── build.rs              # Windows 图标/资源嵌入
 ├── Cargo.toml            # 项目配置和依赖
 ├── Cargo.lock            # 依赖版本锁定
 └── README.md             # 主 README
@@ -403,6 +410,7 @@ LauncherCore/
 - `sha2` - authlib-injector 完整性校验
 - `rpassword` - 无回显密码输入
 - `md-5` - 生成 Java 兼容的离线 UUID
+- `winresource` - Windows 可执行文件图标和版本资源（仅构建时使用）
 
 ## 游戏与配置目录
 
