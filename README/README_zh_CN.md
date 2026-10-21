@@ -149,7 +149,7 @@ mclc launch <加载器版本ID>
 - **Fabric**：Fabric 元数据中最新的稳定版加载器
 - **Quilt**：最新的稳定版（非 beta），没有稳定版时回退到最新版
 - **Forge**：优先使用 `recommended` 版本，没有时使用 `latest`
-- **NeoForge**：选择与目标 Minecraft 版本兼容的最新稳定版（1.20.1 使用旧的 `net.neoforged:forge` 构件）
+- **NeoForge**：选择与目标 Minecraft 版本兼容的最新稳定版（1.20.1 使用旧的 `net.neoforged:forge` 构件；26.3 这类新版本使用 `26.3.0.<build>` 形式的版本号）
 
 安装命令会先确保原版父版本已安装，再安装加载器。Fabric 和 Quilt 的版本 JSON 由加载器元数据构建；Forge 和 NeoForge 会下载官方安装器、校验 SHA-1，并使用检测到的 Java 以 `--installClient` 无界面运行。如果自动选择的 Java 不可用，可用 `--runtime` 指定。
 
@@ -348,7 +348,14 @@ LauncherCore/
 │   ├── install.rs        # 版本安装与文件下载
 │   ├── download.rs       # 下载源、URL 映射与重试
 │   ├── version.rs        # 版本 JSON 继承与合并
-│   ├── loader.rs         # Fabric/Quilt/Forge/NeoForge 安装
+│   ├── loader.rs         # 加载器分发与共享类型
+│   ├── loader/
+│   │   ├── fabric_like.rs # Fabric/Quilt 共享元数据与版本配置逻辑
+│   │   ├── fabric.rs      # Fabric 安装
+│   │   ├── quilt.rs       # Quilt 安装
+│   │   ├── forge.rs       # Forge 版本解析与安装
+│   │   ├── neoforge.rs    # NeoForge 版本解析与安装
+│   │   └── installer.rs   # 共享的加载器安装器下载与执行
 │   ├── launch.rs         # 启动参数组装与进程执行
 │   ├── launch_manager.rs # 启动配置和账号存储
 │   ├── java.rs           # Java 运行时检测和选择

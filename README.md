@@ -149,7 +149,7 @@ Loader version selection:
 - **Fabric**: newest stable loader from the Fabric metadata API
 - **Quilt**: newest stable (non-beta) loader, falling back to the newest available
 - **Forge**: the `recommended` promotion, falling back to `latest`
-- **NeoForge**: newest stable version compatible with the target Minecraft version (1.20.1 uses the legacy `net.neoforged:forge` artifact)
+- **NeoForge**: newest stable version compatible with the target Minecraft version (1.20.1 uses the legacy `net.neoforged:forge` artifact; new Minecraft versions such as 26.3 use `26.3.0.<build>` versions)
 
 The install command ensures the vanilla parent version is installed first. Fabric and Quilt profiles are built from their metadata APIs. Forge and NeoForge are installed by downloading their official installer, verifying its SHA-1, and running it headlessly with `--installClient` using the detected Java runtime. Use `--runtime` if the required Java version is not detected automatically.
 
@@ -348,7 +348,14 @@ LauncherCore/
 │   ├── install.rs        # Version installation and file downloads
 │   ├── download.rs       # Download sources, URL mapping, and retry logic
 │   ├── version.rs        # Version JSON inheritance and merging
-│   ├── loader.rs         # Fabric/Quilt/Forge/NeoForge installation
+│   ├── loader.rs         # Loader dispatch and shared loader types
+│   ├── loader/
+│   │   ├── fabric_like.rs # Shared Fabric/Quilt metadata and profile plumbing
+│   │   ├── fabric.rs      # Fabric installation
+│   │   ├── quilt.rs       # Quilt installation
+│   │   ├── forge.rs       # Forge version resolution and installation
+│   │   ├── neoforge.rs    # NeoForge version resolution and installation
+│   │   └── installer.rs   # Shared loader-installer download and execution
 │   ├── launch.rs         # Launch argument assembly and process execution
 │   ├── launch_manager.rs # Launcher configuration and account storage
 │   ├── java.rs           # Java runtime detection and selection
