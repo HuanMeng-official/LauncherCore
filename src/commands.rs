@@ -1,11 +1,53 @@
 use crate::auth::Authenticator;
-use crate::cli::AuthType;
-use crate::game::launch_manager::LauncherManager;
-use crate::game::loader::LoaderKind;
 use crate::auth::yggdrasil::{
     YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, format_uuid, offline_uuid,
 };
+use crate::cli::{AuthType, InstanceAction};
+use crate::game::instance::InstanceStore;
+use crate::game::launch_manager::LauncherManager;
+use crate::game::loader::LoaderKind;
 use anyhow::Context;
+
+pub fn instance(action: &InstanceAction) -> anyhow::Result<()> {
+    let store = InstanceStore::new()?;
+    match action {
+        InstanceAction::List => {
+            let instances = store.list()?;
+            if instances.is_empty() {
+                crate::outln!("No named instances registered.");
+            } else {
+                crate::outln!("Named instances ({}):", instances.len());
+                for (name, entry) in instances {
+                    crate::outln!("  {:<24} {}", name, entry.path.display());
+                }
+            }
+            crate::outln!("Default game directory (no flags): ./.minecraft");
+            crate::outln!("Instance data root: {}", store.instances_root().display());
+        }
+        InstanceAction::Create { name, path } => {
+            let entry = store.create(name, path.as_deref())?;
+            crate::outln!("Created instance '{}' at {}", name, entry.path.display());
+            crate::outln!("Use it with: mclc --instance {} <command>", name);
+        }
+        InstanceAction::Delete { name, delete_files } => {
+            let entry = store.delete(name, *delete_files)?;
+            if *delete_files {
+                crate::outln!(
+                    "Deleted instance '{}' and its directory {}",
+                    name,
+                    entry.path.display()
+                );
+            } else {
+                crate::outln!(
+                    "Removed instance '{}' from the registry; files remain at {}",
+                    name,
+                    entry.path.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
 
 pub async fn install(
     manager: &LauncherManager,

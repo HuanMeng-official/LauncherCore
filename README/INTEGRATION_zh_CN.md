@@ -79,6 +79,8 @@ English version: [../INTEGRATION.md](../INTEGRATION.md).
 ```bash
 mclc json
 mclc json --download-source bmclapi
+mclc json --instance fabric
+mclc json --game-dir "D:\Minecraft\modded"
 mclc json --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
 ```
 
@@ -88,10 +90,12 @@ mclc json --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
 |------|----------------------|
 | `--download-source <auto\|official\|bmclapi>` | `versions.list` 的下载源，以及未指定 `download_source` 的 `install` 请求的默认下载源 |
 | `-r, --runtime <路径>` | 未指定 `runtime` 的 `install` 和 `launch` 请求的默认 Java 可执行文件 |
+| `--instance <名称>` | 使用已注册命名实例的游戏目录 |
+| `--game-dir <路径>` | 使用显式指定的游戏目录（包含 `versions`、`libraries`、`assets`） |
 
 ### 工作目录
 
-启动器把游戏文件存放在 **`<当前工作目录>/.minecraft`**。该目录在启动时创建，协议请求无法更改它。要使用其他游戏目录，请用不同的工作目录重新启动服务。
+默认情况下，启动器把游戏文件存放在 **`<当前工作目录>/.minecraft`**。可用 `--instance <名称>` 或 `--game-dir <路径>` 选择其他游戏目录；`--game-dir` 指向 `.minecraft` 式目录本身，而不是它的上级目录。选定的目录在启动时固定，协议请求无法更改。要切换实例，请用目标选项重新启动服务。
 
 账号数据与游戏目录分离，存放在操作系统用户配置目录下的 `mclc/` 中，例如 Windows 的 `%APPDATA%\mclc`、Linux 的 `~/.config/mclc`、macOS 的 `~/Library/Application Support/mclc`。同一个系统用户使用的所有游戏目录共享同一份微软账号缓存和外置账号列表。
 
@@ -535,7 +539,7 @@ mclc json --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
 ```
 
 - 列表按 ID 排序。
-- 它读取的是服务启动时固定的工作目录。
+- 它读取的是服务启动时选定的游戏目录（`--instance`、`--game-dir` 或默认目录）。
 - 已安装版本选择器应使用该命令；`versions.list` 只包含远程版本清单。
 
 ---
@@ -732,7 +736,7 @@ function onChildExit():
 - 每个新连接都会收到当前的 `ready` 事件。事件不会重放；重连后应重新查询 `accounts.list`、`java.list`、`installed.list` 和 `versions.list`。请求在执行中断开后仍会继续，但结果只会发送给仍然打开的连接。
 - 启动器子进程退出时，客户端会收到 Web 专用的 `launcher_exit` 事件（`id: null`），并且 `/health` 会返回 `launcher_alive: false`。发送 `shutdown` 只会停止启动器子进程，Web 服务仍可用，并且不会自动重启子进程。
 - `mclc web` 不提供前端静态文件。前端需要单独部署；localhost 上的 Vite 开发服务器无需额外参数即可连接。直接用 `file://` 打开的页面会发送 `Origin: null`，仅在可信的本地开发场景下用 `--allow-origin null` 显式允许。
-- 启动器子进程继承 `mclc web` 的工作目录，因此应从游戏根目录启动。`--runtime` 和 `--download-source` 会转发给子进程。
+- 启动器子进程使用 `--instance` 或 `--game-dir` 选定的游戏目录；都不传时使用 `./.minecraft`。`--runtime` 和 `--download-source` 会转发给子进程。
 - 安全：服务默认绑定回环地址，允许回环 Origin；`--allow-origin` 追加其他来源；`--token` 要求客户端通过 `?token=` 或 `Authorization: Bearer` 提供令牌，绑定非回环地址时必须设置令牌。回环绑定时会校验 Host。不要绑定 `0.0.0.0`。
 - 公网 HTTPS 前端连接回环服务时，可能被浏览器的私有网络访问或混合内容策略拦截；仅设置 `--allow-origin` 并不能保证一定可用。
 
@@ -810,7 +814,7 @@ function onChildExit():
 - **Forge/NeoForge 安装器输出被缓冲：** 客户端只能看到开始/结束进度，看不到安装器控制台行。
 - **只有一份微软账号缓存：** 外置账号支持多账号，但微软账号只有一份缓存。
 - **账号存储按操作系统用户全局共享：** 不按游戏目录隔离。
-- **工作目录在启动时固定：** 更换游戏根目录需要重启服务。
+- **工作目录在启动时固定：** 更换实例或游戏根目录需要用不同的 `--instance`/`--game-dir`（或工作目录）重启服务。
 - **没有事件重放：** 晚连接的客户端会错过之前的事件，事件只实时发送。
 - **协议 1：** 任何不兼容变更都应视为新的协议版本并进行协商。
 

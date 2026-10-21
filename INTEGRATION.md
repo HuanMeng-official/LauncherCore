@@ -87,6 +87,8 @@ keep it running.
 ```bash
 mclc json
 mclc json --download-source bmclapi
+mclc json --instance fabric
+mclc json --game-dir "D:\Minecraft\modded"
 mclc json --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
 ```
 
@@ -96,12 +98,16 @@ Global options provided at startup become session defaults:
 |--------|---------------------|
 | `--download-source <auto\|official\|bmclapi>` | Default source for `versions.list` and for `install` requests that omit `download_source` |
 | `-r, --runtime <PATH>` | Default Java executable for `install` and `launch` requests that omit `runtime` |
+| `--instance <NAME>` | Use a registered named instance's game directory |
+| `--game-dir <PATH>` | Use an explicit game directory containing `versions`, `libraries`, and `assets` |
 
 ### Working directory
 
-The launcher stores game files in **`<current working directory>/.minecraft`**. The directory is
-created at startup and cannot be changed by a protocol request. To use a different game
-directory, restart the server with a different working directory.
+By default, the launcher stores game files in **`<current working directory>/.minecraft`**. Use
+`--instance <NAME>` or `--game-dir <PATH>` to select a different game directory; `--game-dir`
+points to the `.minecraft`-style directory itself, not its parent. The selected directory is
+fixed at startup and cannot be changed by a protocol request. To switch instances, restart the
+server with the desired option.
 
 Account data is separate from the game directory. It is stored under the OS user config
 directory, in `mclc/` (for example `%APPDATA%\mclc` on Windows, `~/.config/mclc` on Linux, and
@@ -581,7 +587,7 @@ Result:
 ```
 
 - The list is sorted by id.
-- It reads the working directory fixed when the server started.
+- It reads the game directory selected when the server started (`--instance`, `--game-dir`, or the default).
 - Use this for installed-version pickers; `versions.list` only contains remote manifest entries.
 
 ---
@@ -802,8 +808,9 @@ Operational differences:
   localhost works without extra flags. A page opened directly from `file://` sends
   `Origin: null`; allow it explicitly with `--allow-origin null` only for trusted local
   development.
-- The launcher child inherits the working directory of `mclc web`, so start it from the game
-  root. `--runtime` and `--download-source` are forwarded to the child.
+- The launcher child uses the game directory selected by `--instance` or `--game-dir`; without
+  either option it uses `./.minecraft`. `--runtime` and `--download-source` are forwarded to the
+  child.
 - Security: the server binds to loopback by default, allows loopback Origins, accepts additional
   origins through `--allow-origin`, and accepts a token through `?token=` or an
   `Authorization: Bearer` header with `--token`. A token is required for non-loopback binds. Host
@@ -911,7 +918,8 @@ Use `ping` after startup and after restarting a crashed bridge. Do not interpret
   not the installer's console lines.
 - **One Microsoft account cache:** external accounts are multi-account, but MSA is a single cache.
 - **Account storage is global per OS user:** not per game directory.
-- **Working directory is fixed at startup:** changing game roots requires restarting the server.
+- **Working directory is fixed at startup:** changing instances or game roots requires
+  restarting the server with a different `--instance`/`--game-dir` (or working directory).
 - **No event replay:** a client that attaches late misses earlier events. Events are live only.
 - **Protocol 1:** treat any incompatible change as a new protocol version and negotiate it.
 

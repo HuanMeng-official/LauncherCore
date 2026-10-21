@@ -1,6 +1,7 @@
-use crate::net::download::DownloadSource;
 use crate::game::loader::LoaderKind;
+use crate::net::download::DownloadSource;
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum AuthType {
@@ -36,6 +37,19 @@ pub struct Cli {
         global = true
     )]
     pub download_source: DownloadSource,
+
+    /// Named game instance to use (see 'mclc instance list')
+    #[arg(long, value_name = "NAME", global = true, conflicts_with = "game_dir")]
+    pub instance: Option<String>,
+
+    /// Game directory containing versions, libraries, and assets (default: ./.minecraft)
+    #[arg(
+        long = "game-dir",
+        value_name = "PATH",
+        global = true,
+        conflicts_with = "instance"
+    )]
+    pub game_dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -52,6 +66,16 @@ pub enum Commands {
     )]
     Java,
 
+    /// Manage named game instances
+    #[command(
+        alias = "instances",
+        long_about = "Manage named game instances. Each instance is an independent game directory containing versions, libraries, assets, saves, and options. Create one with 'mclc instance create <name>', then run any command with '--instance <name>'. Without --instance or --game-dir, commands use ./.minecraft."
+    )]
+    Instance {
+        #[command(subcommand)]
+        action: InstanceAction,
+    },
+
     /// Run the persistent JSON communication server
     #[command(
         long_about = "Run a persistent NDJSON server for GUI integration. The launcher reads one JSON request per line from stdin and writes one JSON event per line to stdout. Commands: ping, shutdown, java.list, versions.list, installed.list, install, launch, login, external_login, accounts.list. Events: ready, log, progress, device_code, profiles, result, error. Each request has a client-chosen \"id\"; results and errors echo it back so concurrent work can be correlated. Requests are processed sequentially."
@@ -60,7 +84,7 @@ pub enum Commands {
 
     /// Start the local web backend for a browser frontend
     #[command(
-        long_about = "Start a local HTTP/WebSocket bridge for a browser-based frontend. The same JSON request/event protocol as 'mclc json' is exposed at ws://HOST:PORT/ws; GET /health returns launcher status. The launcher subprocess is started automatically and uses the current working directory. The server binds to 127.0.0.1 by default. Browser origins on localhost, 127.0.0.1, and ::1 are allowed; use --allow-origin for other frontends. With --token, clients must pass ?token=... or an Authorization: Bearer header. A token is required when binding to a non-loopback address. The web backend does not serve frontend assets; host the frontend separately."
+        long_about = "Start a local HTTP/WebSocket bridge for a browser-based frontend. The same JSON request/event protocol as 'mclc json' is exposed at ws://HOST:PORT/ws; GET /health returns launcher status. The launcher subprocess is started automatically with the selected instance or game directory. The server binds to 127.0.0.1 by default. Browser origins on localhost, 127.0.0.1, and ::1 are allowed; use --allow-origin for other frontends. With --token, clients must pass ?token=... or an Authorization: Bearer header. A token is required when binding to a non-loopback address. The web backend does not serve frontend assets; host the frontend separately."
     )]
     Web {
         /// Port to listen on (0 chooses a free port)
@@ -154,6 +178,33 @@ pub enum Commands {
     },
 }
 
+#[derive(Subcommand)]
+pub enum InstanceAction {
+    /// List registered instances
+    List,
+
+    /// Create a named instance
+    Create {
+        /// Instance name
+        name: String,
+
+        /// Game directory containing versions, libraries, and assets
+        /// (defaults to the launcher data directory)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
+
+    /// Remove an instance from the registry
+    Delete {
+        /// Instance name
+        name: String,
+
+        /// Also delete the instance directory and all its files
+        #[arg(long)]
+        delete_files: bool,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +214,55 @@ mod tests {
     fn json_command_parses() {
         let cli = Cli::try_parse_from(["mclc", "json"]).unwrap();
         assert!(matches!(cli.command, Commands::Json));
+    }
+
+    #[test]
+    fn parses_instance_and_game_dir_globals() {
+        let cli = Cli::try_parse_from(["mclc", "--instance", "fabric", "list"]).unwrap();
+        assert_eq!(cli.instance.as_deref(), Some("fabric"));
+        assert!(cli.game_dir.is_none());
+
+        let cli = Cli::try_parse_from(["mclc", "list", "--game-dir", "instances/fabric"]).unwrap();
+        assert_eq!(
+            cli.game_dir.as_deref(),
+            Some(std::path::Path::new("instances/fabric"))
+        );
+        assert!(cli.instance.is_none());
+    }
+
+    #[test]
+    fn instance_and_game_dir_are_mutually_exclusive() {
+        assert!(
+            Cli::try_parse_from(["mclc", "--instance", "fabric", "--game-dir", "game", "list",])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn instance_commands_parse() {
+        let cli = Cli::try_parse_from(["mclc", "instance", "create", "fabric", "--path", "game"])
+            .unwrap();
+        match cli.command {
+            Commands::Instance {
+                action: InstanceAction::Create { name, path },
+            } => {
+                assert_eq!(name, "fabric");
+                assert_eq!(path.as_deref(), Some(std::path::Path::new("game")));
+            }
+            _ => panic!("unexpected command"),
+        }
+
+        let cli = Cli::try_parse_from(["mclc", "instances", "delete", "fabric", "--delete-files"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Instance {
+                action: InstanceAction::Delete {
+                    delete_files: true,
+                    ..
+                }
+            }
+        ));
     }
 
     #[test]

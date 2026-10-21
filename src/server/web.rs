@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -32,6 +33,7 @@ pub struct WebOptions {
     pub port: u16,
     pub token: Option<String>,
     pub allow_origins: Vec<String>,
+    pub game_dir: PathBuf,
 }
 
 struct WebState {
@@ -95,7 +97,7 @@ pub async fn run(
         })?;
     let address = listener.local_addr()?;
 
-    let bridge = spawn_launcher(source, java_path)?;
+    let bridge = spawn_launcher(source, java_path, &options.game_dir)?;
     let state = Arc::new(WebState {
         bridge,
         bind_host: options.host.clone(),
@@ -128,10 +130,12 @@ pub async fn run(
 fn spawn_launcher(
     source: DownloadSource,
     java_path: Option<String>,
+    game_dir: &Path,
 ) -> anyhow::Result<Arc<Bridge>> {
     let executable = std::env::current_exe().context("Failed to locate the mclc executable")?;
     let mut command = Command::new(executable);
     command.arg("json");
+    command.arg("--game-dir").arg(game_dir);
     match source {
         DownloadSource::Auto => {}
         DownloadSource::Official => {
@@ -669,6 +673,7 @@ fn print_startup(address: &std::net::SocketAddr, options: &WebOptions) {
         host,
         address.port()
     );
+    println!("Game directory:     {}", options.game_dir.display());
     println!("WebSocket endpoint: ws://{}:{}/ws", host, address.port());
     println!(
         "Health endpoint:    http://{}:{}/health",

@@ -19,6 +19,7 @@
 - **版本继承**：解析 `inheritsFrom` 继承链，合并依赖库、参数、资源、下载信息和 Java 要求
 - **版本参数驱动**：解析 `arguments` 中的系统和架构规则与占位符，保留重复的 `--add-opens` / `--add-exports` 等 JVM 标志，并兼容旧版 `minecraftArguments`
 - **模组加载器支持**：可安装 Fabric、Quilt、Forge、NeoForge
+- **多实例**：可注册命名游戏目录，也可用 `--game-dir` 让任意命令使用自定义 `.minecraft` 式目录
 - **认证支持**：支持离线、微软账户和外置 Yggdrasil（authlib-injector）认证
 - **微软令牌自动刷新**：保存微软 refresh token 和 Minecraft 令牌过期时间，启动前按需自动续期
 - **标准离线 UUID**：离线模式按 Java 的 `OfflinePlayer:<名称>` 规则生成 UUID
@@ -62,6 +63,7 @@ mclc <命令> [选项]
 |------|------|
 | **list** | 列出所有可用的 Minecraft 版本 |
 | **java** | 列出检测到的 Java 运行时 |
+| **instance <操作>** | 管理命名实例：`list`、`create`、`delete` |
 | **install <版本>** | 安装 Minecraft 版本，可选安装模组加载器 |
 | **launch <版本>** | 启动已安装的 Minecraft 版本 |
 | **login** | 登录到微软账户 |
@@ -76,6 +78,10 @@ mclc <命令> [选项]
 |------|------|
 | `-r, --runtime <路径>` | Java 可执行文件路径（覆盖自动检测） |
 | `--download-source <来源>` | 下载源：`auto`（默认）、`official` 或 `bmclapi` |
+| `--instance <名称>` | 使用已注册的命名实例 |
+| `--game-dir <路径>` | 使用指定的游戏目录（包含 `versions`、`libraries`、`assets`；默认 `./.minecraft`） |
+
+`--instance` 与 `--game-dir` 互斥。命名实例的游戏文件彼此独立，账号凭据仍共享配置目录中的缓存。
 
 ### 安装选项
 
@@ -102,6 +108,14 @@ mclc <命令> [选项]
 |------|------|
 | `-p, --password <密码>` | 密码。省略时会无回显提示输入；脚本中可使用 `MCLC_PASSWORD` 环境变量 |
 | `-a, --api-url <地址>` | 认证服务器的 API 地址 |
+
+### 实例操作
+
+| 操作 | 描述 |
+|------|------|
+| `instance list` | 列出已注册的命名实例及其路径 |
+| `instance create <名称> [--path <路径>]` | 注册并创建实例；不传 `--path` 时放在启动器本地数据目录 |
+| `instance delete <名称> [--delete-files]` | 从注册表移除实例；加 `--delete-files` 会同时删除目录 |
 
 ## 使用示例
 
@@ -183,6 +197,26 @@ mclc launch 1.21.1 --auth external --api-url https://littleskin.cn --username pl
 
 API 地址会通过服务器的 ALI 响应头解析，因此 `external-login` 和 `launch` 使用同一个 `--api-url` 即可。如果已有本地 authlib-injector.jar，可使用 `--authlib-jar` 跳过下载。
 
+### 多实例
+
+```bash
+mclc instance create fabric
+mclc --instance fabric install 1.21.1 --loader fabric
+mclc --instance fabric launch fabric-loader-<版本>-1.21.1 --username 玩家名
+
+mclc instance list
+```
+
+创建时可用 `--path` 指定其他游戏目录：
+
+```bash
+mclc instance create modded --path "D:\Minecraft\modded"
+mclc --instance modded install 1.21.1 --loader forge
+mclc --instance modded launch <已安装版本ID> --username 玩家名
+```
+
+`--game-dir` 指向游戏目录本身（包含 `versions`、`libraries`、`assets`），不是它的上级目录。两个选项都不传时，行为与之前完全一致，使用 `./.minecraft`。
+
 ### 列出可用版本
 
 ```bash
@@ -258,7 +292,7 @@ mclc web --port 7420 --token <token>
 - 设置 `--token` 后，浏览器连接 `ws://127.0.0.1:7420/ws?token=<token>`，非浏览器客户端也可以通过 `Authorization: Bearer <token>` 传递。
 - 请求、结果和事件的结构与上面的 JSON 模式完全一致。桥接层会在内部重映射请求 ID，因此多个浏览器标签页可以共用一个启动器；请求仍然串行处理。
 - 新 WebSocket 连接会收到当前的 `ready` 事件。事件不会重放，重连后应重新查询 `accounts.list`、`java.list`、`installed.list` 和 `versions.list`。
-- `mclc web` 会以当前工作目录作为游戏根目录并在其下创建 `.minecraft`。全局 `--runtime` 和 `--download-source` 选项会传给启动器子进程。
+- 可用 `--instance <名称>` 或 `--game-dir <路径>` 选择游戏目录；都不传时使用 `./.minecraft`。解析后的目录会传给内部 JSON 服务，全局 `--runtime` 和 `--download-source` 也会转发。
 - 除非清楚风险，否则不要绑定 `0.0.0.0`。绑定非回环地址时必须提供 `--token`，同时应为前端设置明确的 `--allow-origin`。
 
 ## 运行原理
@@ -356,6 +390,7 @@ LauncherCore/
 │   ├── game.rs               # 游戏模块声明
 │   ├── game/
 │   │   ├── install.rs        # 版本安装与文件下载
+│   │   ├── instance.rs       # 命名实例注册表与路径
 │   │   ├── java.rs           # Java 运行时检测和选择
 │   │   ├── launch.rs         # 启动参数组装与进程执行
 │   │   ├── launch_manager.rs # 启动配置和账号存储
@@ -412,18 +447,25 @@ LauncherCore/
 
 ## 游戏与配置目录
 
-游戏文件存放在 `./.minecraft`，相对于执行 `mclc` 时的工作目录（不是用户主目录）。
+默认游戏文件存放在 `./.minecraft`，相对于执行 `mclc` 时的工作目录（不是用户主目录）。可用 `--instance` 或 `--game-dir` 选择其他游戏目录。
 
 | 数据 | 位置 |
 |------|------|
-| 游戏文件 | `./.minecraft`（当前工作目录） |
-| 日志 | `./.minecraft/logs` |
-| 崩溃报告 | `./.minecraft/crash-reports` |
+| 默认游戏文件 | `./.minecraft`（当前工作目录） |
+| 命名实例文件 | `<本地数据目录>/mclc/instances/<名称>`，使用 `--path` 时除外 |
+| 实例注册表（Windows） | `%APPDATA%\mclc\instances.json` |
+| 实例注册表（Linux） | `$XDG_CONFIG_HOME/mclc/instances.json` 或 `~/.config/mclc/instances.json` |
+| 实例注册表（macOS） | `~/Library/Application Support/mclc/instances.json` |
+| 本地数据根目录（Windows） | `%LOCALAPPDATA%\mclc\instances` |
+| 本地数据根目录（Linux） | `$XDG_DATA_HOME/mclc/instances` 或 `~/.local/share/mclc/instances` |
+| 本地数据根目录（macOS） | `~/Library/Application Support/mclc/instances` |
+| 日志 | `<游戏目录>/logs` |
+| 崩溃报告 | `<游戏目录>/crash-reports` |
 | 配置（Windows） | `%APPDATA%\mclc` |
 | 配置（Linux） | `$XDG_CONFIG_HOME/mclc` 或 `~/.config/mclc` |
 | 配置（macOS） | `~/Library/Application Support/mclc` |
 
-配置目录中包含 `auth_cache.json`、`accounts.json` 和下载的 `cache/authlib-injector.jar`。在 Unix 下，目录权限为 `0700`，凭据文件权限为 `0600`。
+配置目录中包含 `auth_cache.json`、`accounts.json`、`instances.json` 和下载的 `cache/authlib-injector.jar`。在 Unix 下，目录权限为 `0700`，凭据文件权限为 `0600`。命名实例的版本、依赖库、资源、存档、日志和设置彼此独立，账号凭据共享。
 
 游戏目录内部结构：
 
@@ -504,7 +546,7 @@ sudo apt-get install libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev
 
 ### 同时运行多个实例
 
-从同一个 `.minecraft` 目录运行多个游戏实例会共享 `logs/latest.log`。如果需要隔离日志或存档，请使用不同的游戏目录。
+从同一个 `.minecraft` 目录运行多个游戏实例会共享 `logs/latest.log`。可用命名实例（`mclc instance create ...` 加 `--instance`）或 `--game-dir` 隔离版本、模组、存档、日志和设置；账号凭据在各实例间共享。
 
 ## 贡献
 

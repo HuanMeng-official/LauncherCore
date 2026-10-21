@@ -19,6 +19,7 @@
 - **Version Inheritance**: Resolves `inheritsFrom` chains, merges libraries, arguments, assets, downloads, and Java requirements
 - **Manifest-Driven Arguments**: Evaluates `arguments` with OS/architecture rules and placeholders, preserves repeated JVM flags such as `--add-opens` and `--add-exports`, and falls back to legacy `minecraftArguments`
 - **Mod Loader Support**: Installs Fabric, Quilt, Forge, and NeoForge
+- **Multiple Instances**: Register named game directories, or point any command at a custom `.minecraft`-style directory with `--game-dir`
 - **Authentication Support**: Offline, Microsoft account, and external Yggdrasil (authlib-injector) authentication
 - **Automatic MSA Refresh**: Stores the Microsoft refresh token and Minecraft token expiry, and renews credentials before launch when needed
 - **Standard Offline UUID**: Derives the Java-compatible `OfflinePlayer:<name>` UUID for offline mode
@@ -62,6 +63,7 @@ mclc <COMMAND> [OPTIONS]
 |---------|-------------|
 | **list** | List all available Minecraft versions |
 | **java** | List detected Java runtimes |
+| **instance <ACTION>** | Manage named game instances: `list`, `create`, or `delete` |
 | **install <VERSION>** | Install a Minecraft version, optionally with a mod loader |
 | **launch <VERSION>** | Launch an installed Minecraft version |
 | **login** | Login to a Microsoft account |
@@ -76,6 +78,10 @@ mclc <COMMAND> [OPTIONS]
 |--------|-------------|
 | `-r, --runtime <PATH>` | Path to the Java executable (overrides automatic detection) |
 | `--download-source <SOURCE>` | Download source: `auto` (default), `official`, or `bmclapi` |
+| `--instance <NAME>` | Use a registered named instance |
+| `--game-dir <PATH>` | Use a specific game directory containing `versions`, `libraries`, and `assets` (default: `./.minecraft`) |
+
+`--instance` and `--game-dir` are mutually exclusive. Named instances keep separate game files; account credentials remain shared in the config directory.
 
 ### Install Options
 
@@ -102,6 +108,14 @@ mclc <COMMAND> [OPTIONS]
 |--------|-------------|
 | `-p, --password <PASSWORD>` | Password. Omit it to be prompted without echo; scripts can use the `MCLC_PASSWORD` environment variable instead |
 | `-a, --api-url <URL>` | API URL of the authentication server |
+
+### Instance Actions
+
+| Action | Description |
+|--------|-------------|
+| `instance list` | List registered named instances and their paths |
+| `instance create <NAME> [--path <PATH>]` | Register and create an instance; without `--path`, it is placed under the launcher's local data directory |
+| `instance delete <NAME> [--delete-files]` | Remove an instance from the registry; add `--delete-files` to also delete its directory |
 
 ## Examples
 
@@ -183,6 +197,26 @@ mclc launch 1.21.1 --auth external --api-url https://littleskin.cn --username pl
 
 The API URL is resolved through the server's ALI header, so the same URL you passed to `external-login` can be used for `launch`. Use `--authlib-jar` if you already have a local authlib-injector.jar.
 
+### Multiple Instances
+
+```bash
+mclc instance create fabric
+mclc --instance fabric install 1.21.1 --loader fabric
+mclc --instance fabric launch fabric-loader-<version>-1.21.1 --username Player
+
+mclc instance list
+```
+
+Use `--path` when creating an instance to keep its game directory somewhere else:
+
+```bash
+mclc instance create modded --path "D:\Minecraft\modded"
+mclc --instance modded install 1.21.1 --loader forge
+mclc --instance modded launch <installed-version-id> --username Player
+```
+
+`--game-dir` points to the game directory itself (the directory that contains `versions`, `libraries`, and `assets`), not its parent. Without either option, commands use `./.minecraft` exactly as before.
+
 ### List Available Versions
 
 ```bash
@@ -258,7 +292,7 @@ mclc web --port 7420 --token <token>
 - With `--token`, connect to `ws://127.0.0.1:7420/ws?token=<token>`, or pass `Authorization: Bearer <token>` from a non-browser client.
 - Requests, results, and events keep the shapes documented above. The bridge remaps request ids internally so multiple browser tabs can share one launcher; requests are still processed sequentially.
 - New WebSocket clients receive the current `ready` event. Events are not replayed, so re-query `accounts.list`, `java.list`, `installed.list`, and `versions.list` after reconnecting.
-- Run `mclc web` from the desired game root; `.minecraft` is created there. Global `--runtime` and `--download-source` options are passed to the launcher subprocess.
+- Use `--instance <NAME>` or `--game-dir <PATH>` to select the game directory; without either, `./.minecraft` is used. The resolved directory is passed to the internal JSON server. Global `--runtime` and `--download-source` options are also forwarded.
 - Do not bind to `0.0.0.0` unless you understand the risk. A non-loopback bind requires `--token`; also provide explicit `--allow-origin` values for the frontend.
 
 ## How It Works
@@ -356,6 +390,7 @@ LauncherCore/
 │   ├── game.rs               # Game module declarations
 │   ├── game/
 │   │   ├── install.rs        # Version installation and file downloads
+│   │   ├── instance.rs       # Named game-instance registry and paths
 │   │   ├── java.rs           # Java runtime detection and selection
 │   │   ├── launch.rs         # Launch argument assembly and process execution
 │   │   ├── launch_manager.rs # Launcher configuration and account storage
@@ -412,18 +447,25 @@ LauncherCore/
 
 ## Game and Configuration Directories
 
-Game files are stored in `./.minecraft`, relative to the directory where `mclc` is executed (not the user's home directory).
+By default, game files are stored in `./.minecraft`, relative to the directory where `mclc` is executed (not the user's home directory). Use `--instance` or `--game-dir` to select another game directory.
 
 | Data | Location |
 |------|----------|
-| Game files | `./.minecraft` (current working directory) |
-| Logs | `./.minecraft/logs` |
-| Crash reports | `./.minecraft/crash-reports` |
+| Default game files | `./.minecraft` (current working directory) |
+| Named instance files | `<local data>/mclc/instances/<name>` unless `--path` is used |
+| Instance registry (Windows) | `%APPDATA%\mclc\instances.json` |
+| Instance registry (Linux) | `$XDG_CONFIG_HOME/mclc/instances.json` or `~/.config/mclc/instances.json` |
+| Instance registry (macOS) | `~/Library/Application Support/mclc/instances.json` |
+| Local data root (Windows) | `%LOCALAPPDATA%\mclc\instances` |
+| Local data root (Linux) | `$XDG_DATA_HOME/mclc/instances` or `~/.local/share/mclc/instances` |
+| Local data root (macOS) | `~/Library/Application Support/mclc/instances` |
+| Logs | `<game directory>/logs` |
+| Crash reports | `<game directory>/crash-reports` |
 | Config (Windows) | `%APPDATA%\mclc` |
 | Config (Linux) | `$XDG_CONFIG_HOME/mclc` or `~/.config/mclc` |
 | Config (macOS) | `~/Library/Application Support/mclc` |
 
-The configuration directory contains `auth_cache.json`, `accounts.json`, and the downloaded `cache/authlib-injector.jar`. On Unix, the directory is created with `0700` and credential files with `0600` permissions.
+The configuration directory contains `auth_cache.json`, `accounts.json`, `instances.json`, and the downloaded `cache/authlib-injector.jar`. On Unix, the directory is created with `0700` and credential files with `0600` permissions. Named instances keep separate versions, libraries, assets, saves, logs, and options; account credentials are shared.
 
 Inside the game directory:
 
@@ -504,7 +546,7 @@ sudo apt-get install libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev
 
 ### Multiple instances
 
-Running multiple game instances from the same `.minecraft` directory shares `logs/latest.log`. Use separate game directories if you need isolated logs or saves.
+Running multiple game instances from the same `.minecraft` directory shares `logs/latest.log`. Use named instances (`mclc instance create ...` and `--instance`) or `--game-dir` to isolate versions, mods, saves, logs, and options. Account credentials are shared across instances.
 
 ## Contributing
 

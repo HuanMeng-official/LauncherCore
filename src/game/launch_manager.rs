@@ -1,12 +1,12 @@
-use crate::auth::{Authenticator, cache_needs_refresh};
-use crate::net::download::DownloadSource;
-use crate::game::install::Installer;
-use crate::game::launch::Launcher;
-use crate::game::loader::LoaderKind;
-use crate::common::models::AuthCache;
 use crate::auth::yggdrasil::{
     AuthlibInjector, YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, select_profile,
 };
+use crate::auth::{Authenticator, cache_needs_refresh};
+use crate::common::models::AuthCache;
+use crate::game::install::Installer;
+use crate::game::launch::Launcher;
+use crate::game::loader::LoaderKind;
+use crate::net::download::DownloadSource;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -66,8 +66,22 @@ pub struct LauncherManager {
 
 impl LauncherManager {
     pub fn new(source: DownloadSource) -> anyhow::Result<Self> {
-        let current_dir = std::env::current_dir()?;
-        let minecraft_dir = current_dir.join(".minecraft");
+        let minecraft_dir = std::env::current_dir()?.join(".minecraft");
+        Self::with_game_dir(source, minecraft_dir)
+    }
+
+    /// Creates a manager for an explicit game directory. The path is the
+    /// `.minecraft`-style directory containing `versions`, `libraries`, and
+    /// `assets`.
+    pub fn with_game_dir(
+        source: DownloadSource,
+        minecraft_dir: std::path::PathBuf,
+    ) -> anyhow::Result<Self> {
+        let minecraft_dir = if minecraft_dir.is_absolute() {
+            minecraft_dir
+        } else {
+            std::env::current_dir()?.join(minecraft_dir)
+        };
         fs::create_dir_all(&minecraft_dir)?;
 
         let versions_dir = minecraft_dir.join("versions");

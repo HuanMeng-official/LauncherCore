@@ -13,6 +13,23 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use game::java;
 use game::launch_manager::LauncherManager;
+use std::path::PathBuf;
+
+fn resolve_game_dir(cli: &Cli) -> Result<PathBuf> {
+    let path = if let Some(game_dir) = &cli.game_dir {
+        game_dir.clone()
+    } else if let Some(instance) = &cli.instance {
+        game::instance::InstanceStore::new()?.resolve(instance)?
+    } else {
+        std::env::current_dir()?.join(".minecraft")
+    };
+
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
 
 fn resolve_password(cli_password: Option<&str>) -> Result<String> {
     if let Some(password) = cli_password {
@@ -38,10 +55,19 @@ fn resolve_password(cli_password: Option<&str>) -> Result<String> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let manager = LauncherManager::new(cli.download_source)?;
+
+    if let Commands::Instance { action } = &cli.command {
+        return commands::instance(action);
+    }
+
+    let game_dir = resolve_game_dir(&cli)?;
+    let manager = LauncherManager::with_game_dir(cli.download_source, game_dir.clone())?;
     let global_java_path = cli.java_runtime_path;
 
     match &cli.command {
+        Commands::Instance { .. } => {
+            unreachable!("instance commands are handled before manager construction")
+        }
         Commands::Json => {
             server::json::run(manager, global_java_path).await?;
         }
@@ -57,6 +83,7 @@ async fn main() -> Result<()> {
                     port: *port,
                     token: token.clone(),
                     allow_origins: allow_origins.clone(),
+                    game_dir: game_dir.clone(),
                 },
                 cli.download_source,
                 global_java_path,
