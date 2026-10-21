@@ -28,7 +28,7 @@
 - **JSON 通信模式**：常驻 NDJSON 服务向 GUI 前端提供安装、启动、登录和账号操作
 - **网页前端后端**：`mclc web` 通过本地 WebSocket 提供同一套协议，并带 Origin 与可选令牌校验
 - **跨平台支持**：支持 Windows、Linux 和 macOS，包括 Linux ARM64 原生库处理
-- **详细错误处理**：使用 anyhow/thiserror 提供每一步的完整错误信息
+- **详细错误处理**：使用 anyhow 提供每一步的完整错误信息
 
 ## 环境要求
 
@@ -348,7 +348,6 @@ LauncherCore/
 │   ├── commands.rs           # 共享的安装与启动命令逻辑
 │   ├── common.rs             # 共享模块声明
 │   ├── common/
-│   │   ├── error.rs          # 错误类型
 │   │   ├── models.rs         # 数据模型和 JSON 结构
 │   │   └── output.rs         # 人类可读/JSON 输出抽象
 │   ├── auth.rs               # 微软账户认证
@@ -397,7 +396,6 @@ LauncherCore/
 - `axum` - 面向浏览器前端的本地 HTTP 和 WebSocket 服务
 - `serde` / `serde_json` - JSON 序列化/反序列化
 - `anyhow` - 便捷的错误处理
-- `thiserror` - 错误派生宏
 - `zip` - ZIP 归档解压和安装器检查
 - `dirs` - 跨平台配置目录路径
 - `url` - URL 解析和操作

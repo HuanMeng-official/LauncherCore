@@ -28,7 +28,7 @@
 - **JSON Communication Mode**: A persistent NDJSON server exposes install, launch, login, and account operations for GUI frontends
 - **Web Frontend Backend**: `mclc web` exposes the same protocol over a local WebSocket with Origin and optional token checks
 - **Cross-Platform**: Supports Windows, Linux, and macOS, including Linux ARM64 native handling
-- **Detailed Error Handling**: Comprehensive error messages at every step using anyhow/thiserror
+- **Detailed Error Handling**: Comprehensive error messages at every step using anyhow
 
 ## Requirements
 
@@ -348,7 +348,6 @@ LauncherCore/
 │   ├── commands.rs           # Shared install and launch command logic
 │   ├── common.rs             # Shared module declarations
 │   ├── common/
-│   │   ├── error.rs          # Error types
 │   │   ├── models.rs         # Data models and JSON structures
 │   │   └── output.rs         # Human/JSON output abstraction
 │   ├── auth.rs               # Microsoft account authentication
@@ -397,7 +396,6 @@ LauncherCore/
 - `axum` - Local HTTP and WebSocket server for browser frontends
 - `serde` / `serde_json` - JSON serialization/deserialization
 - `anyhow` - Convenient error handling
-- `thiserror` - Error derive macros
 - `zip` - ZIP archive extraction and installer inspection
 - `dirs` - Cross-platform configuration directory paths
 - `url` - URL parsing and manipulation
