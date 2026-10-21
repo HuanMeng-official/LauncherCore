@@ -1,5 +1,5 @@
-use crate::game::java::select_java;
 use crate::common::models::VersionDetails;
+use crate::game::java::select_java;
 use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -346,7 +346,8 @@ impl Launcher {
             return Err(anyhow::anyhow!("Version {} not found", version_id));
         }
 
-        let version_details = crate::game::version::load_version_details(&self.versions_dir, version_id)?;
+        let version_details =
+            crate::game::version::load_version_details(&self.versions_dir, version_id)?;
 
         let required_java = version_details
             .java_version

@@ -1,5 +1,5 @@
-use crate::net::download::{self, DownloadSource};
 use crate::common::models::*;
+use crate::net::download::{self, DownloadSource};
 use anyhow::Context;
 use futures_util::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -137,7 +137,8 @@ impl Installer {
     /// Downloads all files required by an already-written version JSON,
     /// following `inheritsFrom` when present.
     pub async fn install_loaded_version(&self, version_id: &str) -> anyhow::Result<()> {
-        let version_details = crate::game::version::load_version_details(&self.versions_dir, version_id)?;
+        let version_details =
+            crate::game::version::load_version_details(&self.versions_dir, version_id)?;
         let version_dir = self.versions_dir.join(version_id);
         fs::create_dir_all(&version_dir)?;
 
@@ -357,7 +358,12 @@ impl Installer {
         // Extract native libraries
         let total_extract = extraction_tasks.len() as u64;
         if total_extract > 0 {
-            crate::common::output::progress("extract", 0, total_extract, "Extracting native libraries");
+            crate::common::output::progress(
+                "extract",
+                0,
+                total_extract,
+                "Extracting native libraries",
+            );
         }
         for (index, (jar_path, extract_dir)) in extraction_tasks.into_iter().enumerate() {
             if jar_path.exists() {

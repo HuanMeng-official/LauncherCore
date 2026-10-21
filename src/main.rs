@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
                 println!("Login successful! You can now launch with '--auth msa'.");
             }
             Err(e) => {
-                eprintln!("Authentication failed: {}", e);
+                eprintln!("Authentication failed: {:#}", e);
                 std::process::exit(1);
             }
         },
@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
                     );
                 }
                 Err(e) => {
-                    eprintln!("External authentication failed: {}", e);
+                    eprintln!("External authentication failed: {:#}", e);
                     std::process::exit(1);
                 }
             }

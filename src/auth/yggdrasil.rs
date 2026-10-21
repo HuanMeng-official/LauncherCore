@@ -191,7 +191,10 @@ impl YggdrasilAuthenticator {
             ));
         }
 
-        let response: YggdrasilAuthenticateResponse = res.json().await?;
+        let response: YggdrasilAuthenticateResponse = res
+            .json()
+            .await
+            .with_context(|| format!("Failed to decode authentication response from {}", url))?;
         Ok(response)
     }
 
@@ -243,7 +246,10 @@ impl YggdrasilAuthenticator {
             ));
         }
 
-        let response: YggdrasilAuthenticateResponse = res.json().await?;
+        let response: YggdrasilAuthenticateResponse = res
+            .json()
+            .await
+            .with_context(|| format!("Failed to decode token refresh response from {}", url))?;
         Ok(response)
     }
 
@@ -306,19 +312,10 @@ impl YggdrasilAccount {
             profile
         };
 
-        let user_id = response
-            .user
-            .as_ref()
-            .context("User info not available")?
-            .id
-            .clone();
-        let user_properties_json = serde_json::to_string(
-            &response
-                .user
-                .as_ref()
-                .context("User info not available")?
-                .properties,
-        )?;
+        let user = response.user.as_ref().context("User info not available")?;
+        let user_id = user.id.clone();
+        let user_properties = user.properties.clone().unwrap_or_default();
+        let user_properties_json = serde_json::to_string(&user_properties)?;
 
         Ok(Self {
             api_url,
@@ -530,6 +527,31 @@ mod tests {
             download_url, sha256
         );
         test_http::serve_once(test_http::response("200 OK", &[], body.as_bytes())).await
+    }
+
+    #[tokio::test]
+    async fn decodes_a_littleskin_authenticate_response() {
+        let body = r#"{
+            "accessToken": "access",
+            "clientToken": "client",
+            "availableProfiles": [
+                {"id": "00112233445566778899aabbccddeeff", "name": "Steve"},
+                {"id": "ffeeddccbbaa99887766554433221100", "name": "Alex"}
+            ],
+            "user": {"id": "00112233445566778899aabbccddeeff"}
+        }"#;
+        let server =
+            test_http::serve_once(test_http::response("200 OK", &[], body.as_bytes())).await;
+        let authenticator = YggdrasilAuthenticator::new(server.base_url);
+
+        let response = authenticator
+            .authenticate("player@example.com", "password")
+            .await
+            .unwrap();
+
+        assert_eq!(response.available_profiles.len(), 2);
+        assert!(response.selected_profile.is_none());
+        assert!(response.user.unwrap().properties.is_none());
     }
 
     #[test]

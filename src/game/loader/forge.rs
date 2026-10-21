@@ -1,8 +1,8 @@
 //! Forge version resolution and installer invocation.
 
 use super::installer::run_installer;
-use crate::net::download;
 use crate::game::install::Installer;
+use crate::net::download;
 use serde::Deserialize;
 use std::collections::HashMap;
 

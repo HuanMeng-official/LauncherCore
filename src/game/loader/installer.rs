@@ -1,7 +1,7 @@
 //! Shared download, verification, and execution for loader installers.
 
-use crate::net::download;
 use crate::game::install::Installer;
+use crate::net::download;
 use anyhow::Context;
 use std::fs;
 use std::io::Read;

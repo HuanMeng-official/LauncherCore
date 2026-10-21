@@ -7,10 +7,10 @@
 
 use crate::cli::AuthType;
 use crate::commands::{self, LaunchOptions};
-use crate::net::download::DownloadSource;
+use crate::common::output;
 use crate::game::launch_manager::LauncherManager;
 use crate::game::loader::LoaderKind;
-use crate::common::output;
+use crate::net::download::DownloadSource;
 use anyhow::Context;
 use serde::Deserialize;
 use serde_json::{Value, json};

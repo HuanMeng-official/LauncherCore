@@ -538,7 +538,7 @@ pub struct YggdrasilAuthenticateResponse {
     pub access_token: String,
     #[serde(rename = "clientToken")]
     pub client_token: String,
-    #[serde(rename = "availableProfiles")]
+    #[serde(rename = "availableProfiles", default)]
     pub available_profiles: Vec<YggdrasilProfile>,
     #[serde(rename = "selectedProfile")]
     pub selected_profile: Option<YggdrasilProfile>,
@@ -562,7 +562,9 @@ pub struct YggdrasilProperty {
 #[derive(Debug, Deserialize)]
 pub struct YggdrasilUser {
     pub id: String,
-    pub properties: Vec<YggdrasilProperty>,
+    /// Some servers (including LittleSkin) omit this field or send null.
+    #[serde(default)]
+    pub properties: Option<Vec<YggdrasilProperty>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -649,6 +651,42 @@ mod tests {
             sha1: None,
             size: None,
         }
+    }
+
+    #[test]
+    fn decodes_yggdrasil_response_without_user_properties() {
+        let response: YggdrasilAuthenticateResponse = serde_json::from_str(
+            r#"{
+                "accessToken": "access",
+                "clientToken": "client",
+                "availableProfiles": [
+                    {"id": "00112233445566778899aabbccddeeff", "name": "Steve"}
+                ],
+                "user": {"id": "00112233445566778899aabbccddeeff"}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.available_profiles.len(), 1);
+        assert!(response.selected_profile.is_none());
+        assert!(response.user.unwrap().properties.is_none());
+    }
+
+    #[test]
+    fn allows_yggdrasil_response_without_available_profiles() {
+        let response: YggdrasilAuthenticateResponse = serde_json::from_str(
+            r#"{
+                "accessToken": "access",
+                "clientToken": "client",
+                "selectedProfile": {"id": "00112233445566778899aabbccddeeff", "name": "Steve"},
+                "user": {"id": "00112233445566778899aabbccddeeff", "properties": null}
+            }"#,
+        )
+        .unwrap();
+
+        assert!(response.available_profiles.is_empty());
+        assert_eq!(response.selected_profile.unwrap().name, "Steve");
+        assert!(response.user.unwrap().properties.is_none());
     }
 
     #[test]

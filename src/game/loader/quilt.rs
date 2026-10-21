@@ -106,7 +106,8 @@ mod tests {
         assert_eq!(profile["libraries"].as_array().unwrap().len(), 4);
         assert!(profile["arguments"].get("jvm").is_none());
 
-        let details: crate::common::models::VersionDetails = serde_json::from_value(profile).unwrap();
+        let details: crate::common::models::VersionDetails =
+            serde_json::from_value(profile).unwrap();
         assert_eq!(details.id, "quilt-loader-0.20.0-beta.9-1.21.1");
         assert_eq!(details.inherits_from.as_deref(), Some("1.21.1"));
     }
