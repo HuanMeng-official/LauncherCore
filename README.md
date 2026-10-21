@@ -293,6 +293,7 @@ mclc web --port 7420 --token <token>
 - Requests, results, and events keep the shapes documented above. The bridge remaps request ids internally so multiple browser tabs can share one launcher; requests are still processed sequentially.
 - New WebSocket clients receive the current `ready` event. Events are not replayed, so re-query `accounts.list`, `java.list`, `installed.list`, and `versions.list` after reconnecting.
 - Use `--instance <NAME>` or `--game-dir <PATH>` to select the game directory; without either, `./.minecraft` is used. The resolved directory is passed to the internal JSON server. Global `--runtime` and `--download-source` options are also forwarded.
+- One `mclc web` process serves one instance. For multiple instances, run one server per instance on different ports and connect the frontend to the selected one.
 - Do not bind to `0.0.0.0` unless you understand the risk. A non-loopback bind requires `--token`; also provide explicit `--allow-origin` values for the frontend.
 
 ## How It Works

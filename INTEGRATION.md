@@ -7,8 +7,8 @@
 This guide describes the persistent NDJSON protocol exposed by `mclc json` and how to build a
 client around it. It is intentionally framework-agnostic: any runtime that can spawn a child
 process and read/write pipes can use it. For command-line usage, see [README.md](README.md).
-The implementation lives in [src/json_server.rs](src/json_server.rs) and
-[src/output.rs](src/output.rs).
+The implementation lives in [src/server/json.rs](src/server/json.rs) and
+[src/common/output.rs](src/common/output.rs).
 
 Chinese version: [README/INTEGRATION_zh_CN.md](README/INTEGRATION_zh_CN.md).
 
@@ -113,6 +113,42 @@ Account data is separate from the game directory. It is stored under the OS user
 directory, in `mclc/` (for example `%APPDATA%\mclc` on Windows, `~/.config/mclc` on Linux, and
 `~/Library/Application Support/mclc` on macOS). All game directories used by the same OS user
 share the same cached Microsoft account and external accounts.
+
+### Named instances
+
+Named instances are independent game directories. They are managed by the launcher CLI, not by
+additional protocol commands:
+
+```bash
+mclc instance create fabric
+mclc instance create modded --path "D:\Minecraft\modded"
+mclc instance list
+mclc instance delete modded              # remove the registry entry, keep files
+mclc instance delete modded --delete-files
+```
+
+Pass `--instance <NAME>` or `--game-dir <PATH>` when starting the server:
+
+```bash
+mclc json --instance fabric
+mclc json --game-dir "D:\Minecraft\modded"
+```
+
+- A named instance created without `--path` is placed under the launcher's local data directory.
+- The registry is stored at `<config>/mclc/instances.json` and maps names to absolute game
+  directories, if the client needs to read it directly. Its shape is
+  `{"instances":{"fabric":{"path":"C:\\Games\\fabric"}}}`.
+- `--game-dir` is the `.minecraft`-style directory itself, not its parent.
+- Accounts are shared across instances; versions, libraries, assets, saves, logs, and options are
+  separate.
+- The selected instance is fixed for the lifetime of the server process. `installed.list`,
+  `install`, `launch`, and all other commands always operate on it.
+
+For a GUI with an instance picker, use one server process per instance, preferably with one
+`mclc web` instance per port, and route the UI to the selected backend. Alternatively, restart the
+backend with a different `--instance`/`--game-dir`; events and in-flight operations do not carry
+over. Protocol version 1 has no request for enumerating or switching instances, so the frontend
+must maintain its own list (or invoke `mclc instance list` out of band).
 
 ### Startup handshake
 
@@ -810,7 +846,9 @@ Operational differences:
   development.
 - The launcher child uses the game directory selected by `--instance` or `--game-dir`; without
   either option it uses `./.minecraft`. `--runtime` and `--download-source` are forwarded to the
-  child.
+  child. One `mclc web` process serves one instance; for multiple instances, run one server per
+  instance on a different port and connect the frontend to the selected one. There is no runtime
+  instance switch.
 - Security: the server binds to loopback by default, allows loopback Origins, accepts additional
   origins through `--allow-origin`, and accepts a token through `?token=` or an
   `Authorization: Bearer` header with `--token`. A token is required for non-loopback binds. Host
@@ -920,6 +958,8 @@ Use `ping` after startup and after restarting a crashed bridge. Do not interpret
 - **Account storage is global per OS user:** not per game directory.
 - **Working directory is fixed at startup:** changing instances or game roots requires
   restarting the server with a different `--instance`/`--game-dir` (or working directory).
+- **No instance enumeration or switching in protocol 1:** selection is a startup option. Run one
+  server per instance, or maintain the instance list in the client and restart to switch.
 - **No event replay:** a client that attaches late misses earlier events. Events are live only.
 - **Protocol 1:** treat any incompatible change as a new protocol version and negotiate it.
 

@@ -293,6 +293,7 @@ mclc web --port 7420 --token <token>
 - 请求、结果和事件的结构与上面的 JSON 模式完全一致。桥接层会在内部重映射请求 ID，因此多个浏览器标签页可以共用一个启动器；请求仍然串行处理。
 - 新 WebSocket 连接会收到当前的 `ready` 事件。事件不会重放，重连后应重新查询 `accounts.list`、`java.list`、`installed.list` 和 `versions.list`。
 - 可用 `--instance <名称>` 或 `--game-dir <路径>` 选择游戏目录；都不传时使用 `./.minecraft`。解析后的目录会传给内部 JSON 服务，全局 `--runtime` 和 `--download-source` 也会转发。
+- 一个 `mclc web` 进程服务一个实例。多实例时应在不同端口各启动一个服务，并让前端连接到选中的那个。
 - 除非清楚风险，否则不要绑定 `0.0.0.0`。绑定非回环地址时必须提供 `--token`，同时应为前端设置明确的 `--allow-origin`。
 
 ## 运行原理

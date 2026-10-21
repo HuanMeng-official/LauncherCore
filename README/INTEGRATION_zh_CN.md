@@ -5,8 +5,8 @@
 **适用命令：** `mclc json` 以及 `mclc web` WebSocket 传输
 
 本文说明 `mclc json` 提供的常驻 NDJSON 协议，以及如何围绕它编写客户端。文档与具体 GUI 框架无关：任何能够启动子进程并读写管道的运行时都可以接入。命令行用法见
-[README_zh_CN.md](README_zh_CN.md)，实现位于 [../src/json_server.rs](../src/json_server.rs) 和
-[../src/output.rs](../src/output.rs)。
+[README_zh_CN.md](README_zh_CN.md)，实现位于 [../src/server/json.rs](../src/server/json.rs) 和
+[../src/common/output.rs](../src/common/output.rs)。
 
 English version: [../INTEGRATION.md](../INTEGRATION.md).
 
@@ -98,6 +98,33 @@ mclc json --runtime "C:\Program Files\Java\jdk-21\bin\java.exe"
 默认情况下，启动器把游戏文件存放在 **`<当前工作目录>/.minecraft`**。可用 `--instance <名称>` 或 `--game-dir <路径>` 选择其他游戏目录；`--game-dir` 指向 `.minecraft` 式目录本身，而不是它的上级目录。选定的目录在启动时固定，协议请求无法更改。要切换实例，请用目标选项重新启动服务。
 
 账号数据与游戏目录分离，存放在操作系统用户配置目录下的 `mclc/` 中，例如 Windows 的 `%APPDATA%\mclc`、Linux 的 `~/.config/mclc`、macOS 的 `~/Library/Application Support/mclc`。同一个系统用户使用的所有游戏目录共享同一份微软账号缓存和外置账号列表。
+
+### 命名实例
+
+命名实例是彼此独立的游戏目录，由启动器 CLI 管理，协议本身不增加实例命令：
+
+```bash
+mclc instance create fabric
+mclc instance create modded --path "D:\Minecraft\modded"
+mclc instance list
+mclc instance delete modded              # 只移除注册表，保留文件
+mclc instance delete modded --delete-files
+```
+
+启动服务时通过 `--instance <名称>` 或 `--game-dir <路径>` 选择：
+
+```bash
+mclc json --instance fabric
+mclc json --game-dir "D:\Minecraft\modded"
+```
+
+- 不指定 `--path` 的命名实例放在启动器的本地数据目录下。
+- 实例注册表位于 `<配置目录>/mclc/instances.json`，记录名称到绝对游戏目录的映射；客户端需要时可以直接读取，结构为 `{"instances":{"fabric":{"path":"C:\\Games\\fabric"}}}`。
+- `--game-dir` 指向 `.minecraft` 式目录本身，不是它的上级目录。
+- 账号在各实例间共享；版本、依赖库、资源、存档、日志和设置彼此独立。
+- 选定的实例在服务进程生命周期内固定。`installed.list`、`install`、`launch` 等所有命令都作用于该实例。
+
+如果 GUI 需要实例选择器，推荐每个实例启动一个服务进程（例如不同端口的多个 `mclc web`），再把界面路由到选中的后端；也可以在切换时用不同的 `--instance`/`--game-dir` 重启后端，但事件和进行中的操作不会保留。协议版本 1 没有枚举或切换实例的请求，前端需要自己维护列表，或在外部调用 `mclc instance list`。
 
 ### 启动握手
 
@@ -736,7 +763,7 @@ function onChildExit():
 - 每个新连接都会收到当前的 `ready` 事件。事件不会重放；重连后应重新查询 `accounts.list`、`java.list`、`installed.list` 和 `versions.list`。请求在执行中断开后仍会继续，但结果只会发送给仍然打开的连接。
 - 启动器子进程退出时，客户端会收到 Web 专用的 `launcher_exit` 事件（`id: null`），并且 `/health` 会返回 `launcher_alive: false`。发送 `shutdown` 只会停止启动器子进程，Web 服务仍可用，并且不会自动重启子进程。
 - `mclc web` 不提供前端静态文件。前端需要单独部署；localhost 上的 Vite 开发服务器无需额外参数即可连接。直接用 `file://` 打开的页面会发送 `Origin: null`，仅在可信的本地开发场景下用 `--allow-origin null` 显式允许。
-- 启动器子进程使用 `--instance` 或 `--game-dir` 选定的游戏目录；都不传时使用 `./.minecraft`。`--runtime` 和 `--download-source` 会转发给子进程。
+- 启动器子进程使用 `--instance` 或 `--game-dir` 选定的游戏目录；都不传时使用 `./.minecraft`。`--runtime` 和 `--download-source` 会转发给子进程。一个 `mclc web` 进程服务一个实例；多实例时应在不同端口各启动一个服务，并让前端连接到选中的那个。运行时不能切换实例。
 - 安全：服务默认绑定回环地址，允许回环 Origin；`--allow-origin` 追加其他来源；`--token` 要求客户端通过 `?token=` 或 `Authorization: Bearer` 提供令牌，绑定非回环地址时必须设置令牌。回环绑定时会校验 Host。不要绑定 `0.0.0.0`。
 - 公网 HTTPS 前端连接回环服务时，可能被浏览器的私有网络访问或混合内容策略拦截；仅设置 `--allow-origin` 并不能保证一定可用。
 
@@ -815,6 +842,7 @@ function onChildExit():
 - **只有一份微软账号缓存：** 外置账号支持多账号，但微软账号只有一份缓存。
 - **账号存储按操作系统用户全局共享：** 不按游戏目录隔离。
 - **工作目录在启动时固定：** 更换实例或游戏根目录需要用不同的 `--instance`/`--game-dir`（或工作目录）重启服务。
+- **协议 1 不支持枚举或切换实例：** 实例选择是启动选项。请为每个实例启动一个服务，或由客户端维护实例列表并在切换时重启。
 - **没有事件重放：** 晚连接的客户端会错过之前的事件，事件只实时发送。
 - **协议 1：** 任何不兼容变更都应视为新的协议版本并进行协商。
 
