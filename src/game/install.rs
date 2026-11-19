@@ -3,7 +3,6 @@ use crate::net::download::{self, DownloadSource};
 use anyhow::Context;
 use futures_util::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -18,10 +17,10 @@ const MAVEN_BASE_URL: &str = "https://repo1.maven.org/maven2";
 const MAX_CONCURRENT_DOWNLOADS: usize = 16;
 
 fn manifest_has_linux_arm64_native(library: &crate::common::models::Library) -> bool {
-    if let Some(classifier) = library.name.split(':').nth(3) {
-        if classifier == "natives-linux-arm64" || classifier == "natives-linux-aarch64" {
-            return true;
-        }
+    if let Some(classifier) = library.name.split(':').nth(3)
+        && (classifier == "natives-linux-arm64" || classifier == "natives-linux-aarch64")
+    {
+        return true;
     }
 
     library
@@ -33,6 +32,114 @@ fn manifest_has_linux_arm64_native(library: &crate::common::models::Library) -> 
                 || classifiers.get("natives-linux-aarch64").is_some()
         })
         .unwrap_or(false)
+}
+
+fn missing_lwjgl_arm64_modules(
+    libraries: &[crate::common::models::Library],
+) -> HashMap<String, String> {
+    let target_lwjgl_modules: HashSet<&str> = [
+        "lwjgl",
+        "lwjgl-glfw",
+        "lwjgl-jemalloc",
+        "lwjgl-openal",
+        "lwjgl-opengl",
+        "lwjgl-stb",
+        "lwjgl-tinyfd",
+        "lwjgl-freetype",
+    ]
+    .into_iter()
+    .collect();
+
+    let mut base_modules: HashMap<String, String> = HashMap::new();
+    let mut modules_with_arm64: HashSet<(String, String)> = HashSet::new();
+
+    for lib in libraries {
+        if !lib.is_allowed_for_current_platform() || !lib.name.starts_with("org.lwjgl:") {
+            continue;
+        }
+
+        let parts: Vec<&str> = lib.name.split(':').collect();
+        if parts.len() >= 3 {
+            let artifact_id = parts[1];
+            let version = parts[2];
+            if !target_lwjgl_modules.contains(artifact_id) {
+                continue;
+            }
+
+            if manifest_has_linux_arm64_native(lib) {
+                modules_with_arm64.insert((artifact_id.to_string(), version.to_string()));
+            } else if parts.len() == 3 {
+                base_modules.insert(artifact_id.to_string(), version.to_string());
+            }
+        }
+    }
+
+    base_modules
+        .retain(|artifact_id, version| !modules_with_arm64.contains(&(artifact_id.clone(), version.clone())));
+    base_modules
+}
+
+pub(crate) fn is_native_library_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".dll")
+        || lower.ends_with(".so")
+        || lower.ends_with(".dylib")
+        || lower.ends_with(".jnilib")
+        || lower.split(".so.").nth(1).is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix
+                    .split('.')
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        })
+}
+
+pub(crate) fn extract_native_library(jar_path: &Path, extract_dir: &Path) -> anyhow::Result<()> {
+    let file = std::fs::File::open(jar_path)
+        .with_context(|| format!("Failed to open native JAR file: {:?}", jar_path))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .with_context(|| format!("Failed to read ZIP archive: {:?}", jar_path))?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).with_context(|| {
+            format!(
+                "Failed to get file entry {} from archive: {:?}",
+                i, jar_path
+            )
+        })?;
+        if file.is_dir() {
+            continue;
+        }
+
+        let Some(relative_path) = file.enclosed_name() else {
+            continue;
+        };
+        let file_name = file
+            .name()
+            .with_context(|| {
+                format!(
+                    "Failed to get entry name {} from archive: {:?}",
+                    i, jar_path
+                )
+            })?
+            .to_string();
+
+        if is_native_library_file(&file_name) {
+            let outpath = extract_dir.join(relative_path);
+            if let Some(p) = outpath.parent()
+                && !p.exists()
+            {
+                fs::create_dir_all(p).with_context(|| {
+                    format!("Failed to create directory for native file: {:?}", p)
+                })?;
+            }
+            let mut outfile = std::fs::File::create(&outpath).with_context(|| {
+                format!("Failed to create output file for native: {:?}", outpath)
+            })?;
+            std::io::copy(&mut file, &mut outfile)
+                .with_context(|| format!("Failed to write native file: {:?}", outpath))?;
+        }
+    }
+    Ok(())
 }
 
 fn lwjgl_native_url(module: &str, version: &str, classifier: &str) -> String {
@@ -75,7 +182,7 @@ pub struct Installer {
 
 impl Installer {
     pub async fn fetch_versions(&self) -> anyhow::Result<Vec<VersionInfo>> {
-        let client = Client::new();
+        let client = download::http_client();
         let manifest: VersionManifest =
             download::fetch_json(&client, VERSION_MANIFEST_URL, self.source).await?;
         Ok(manifest.versions)
@@ -120,7 +227,7 @@ impl Installer {
         crate::outln!("Installing Minecraft version: {}", version_id);
         crate::outln!("Download source: {}", self.source.label());
 
-        let client = Client::new();
+        let client = download::http_client();
         let (_version_info, version_details) =
             self.fetch_version_details(&client, version_id).await?;
 
@@ -151,7 +258,7 @@ impl Installer {
             .join(&jar_id)
             .join(format!("{}.jar", jar_id));
 
-        let client = Client::new();
+        let client = download::http_client();
 
         // Collect all download tasks
         let mut tasks = Vec::new();
@@ -162,16 +269,21 @@ impl Installer {
         let mut asset_index_size = None;
 
         // Client JAR
-        if let Some(downloads) = &version_details.downloads {
-            if !client_jar_path.exists() {
-                tasks.push(DownloadTask {
-                    url: downloads.client.url.clone(),
-                    path: client_jar_path,
-                    task_type: "client".to_string(),
-                    sha1: Some(downloads.client.sha1.clone()),
-                    size: Some(downloads.client.size),
-                });
-            }
+        if let Some(downloads) = &version_details.downloads
+            && !downloads.client.url.is_empty()
+            && !download::is_valid_cached_file(
+                &client_jar_path,
+                Some(&downloads.client.sha1),
+                Some(downloads.client.size),
+            )
+        {
+            tasks.push(DownloadTask {
+                url: downloads.client.url.clone(),
+                path: client_jar_path,
+                task_type: "client".to_string(),
+                sha1: Some(downloads.client.sha1.clone()),
+                size: Some(downloads.client.size),
+            });
         }
 
         // Asset index URL (always need to check this for assets)
@@ -185,20 +297,23 @@ impl Installer {
             asset_index_size = Some(asset_index.size);
         }
 
-        // Download client JAR and asset index first if needed
+        // Download asset index first if needed
         let mut first_phase_tasks = Vec::new();
-        if let Some(ref url) = asset_index_url {
-            if let Some(ref path) = asset_index_path {
-                if !path.exists() {
-                    first_phase_tasks.push(DownloadTask {
-                        url: url.clone(),
-                        path: path.clone(),
-                        task_type: "index".to_string(),
-                        sha1: asset_index_sha1.clone(),
-                        size: asset_index_size,
-                    });
-                }
-            }
+        if let Some(ref url) = asset_index_url
+            && let Some(ref path) = asset_index_path
+            && !download::is_valid_cached_file(
+                path,
+                asset_index_sha1.as_deref(),
+                asset_index_size,
+            )
+        {
+            first_phase_tasks.push(DownloadTask {
+                url: url.clone(),
+                path: path.clone(),
+                task_type: "index".to_string(),
+                sha1: asset_index_sha1.clone(),
+                size: asset_index_size,
+            });
         }
 
         if !first_phase_tasks.is_empty() {
@@ -241,7 +356,7 @@ impl Installer {
         }
 
         // Now collect library and asset tasks
-        let client = Client::new();
+        let client = download::http_client();
         let version_natives_dir = version_dir.join("natives");
         fs::create_dir_all(&version_natives_dir)?;
         self.collect_library_download_tasks(
@@ -264,96 +379,89 @@ impl Installer {
         }
 
         // Assets (now index should exist)
-        if let Some(ref index_path) = asset_index_path {
-            if index_path.exists() {
-                self.collect_asset_download_tasks(index_path, &mut tasks)?;
-            }
+        if let Some(ref index_path) = asset_index_path
+            && index_path.exists()
+        {
+            self.collect_asset_download_tasks(index_path, &mut tasks)?;
         }
 
-        if tasks.is_empty() && extraction_tasks.is_empty() {
+        if tasks.is_empty() {
             crate::outln!("All files already downloaded for version {}!", version_id);
-            // Still need to extract natives if they exist
-            for (jar_path, extract_dir) in &extraction_tasks {
-                if jar_path.exists() {
-                    self.extract_lwjgl3_native_library(jar_path, extract_dir)?;
-                }
-            }
-            return Ok(());
-        }
-
-        // Create progress bar (hidden in JSON mode; progress is emitted as events)
-        let pb = Arc::new(if crate::common::output::is_json() {
-            ProgressBar::hidden()
         } else {
-            ProgressBar::new(tasks.len() as u64)
-        });
-        pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
-            .unwrap()
-            .progress_chars("#>-"));
-        crate::common::output::progress("downloads", 0, tasks.len() as u64, "Downloading files");
+            // Create progress bar (hidden in JSON mode; progress is emitted as events)
+            let pb = Arc::new(if crate::common::output::is_json() {
+                ProgressBar::hidden()
+            } else {
+                ProgressBar::new(tasks.len() as u64)
+            });
+            pb.set_style(ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
+                .unwrap()
+                .progress_chars("#>-"));
+            crate::common::output::progress("downloads", 0, tasks.len() as u64, "Downloading files");
 
-        // Download all files concurrently
-        let client = Arc::new(client);
-        let counter = Arc::new(AtomicU64::new(0));
-        let pb_clone = Arc::clone(&pb);
+            // Download all files concurrently
+            let client = Arc::new(client);
+            let counter = Arc::new(AtomicU64::new(0));
+            let pb_clone = Arc::clone(&pb);
 
-        let source = self.source;
-        let download_results = stream::iter(tasks)
-            .map(|task| {
-                let client = Arc::clone(&client);
-                let counter = Arc::clone(&counter);
-                let pb = Arc::clone(&pb_clone);
-                let urls = download::url_candidates(&task.url, source);
-                tokio::spawn(async move {
-                    let result = download::download_file(
-                        &client,
-                        &urls,
-                        &task.path,
-                        task.sha1.as_deref(),
-                        task.size,
-                    )
-                    .await;
-                    if result.is_ok() {
-                        let downloaded = counter.fetch_add(1, Ordering::SeqCst) + 1;
-                        pb.set_position(downloaded);
-                        crate::common::output::progress(
-                            "downloads",
-                            downloaded,
-                            pb.length().unwrap_or(0),
-                            "Downloading files",
-                        );
-                    }
-                    (task, result)
+            let source = self.source;
+            let download_results = stream::iter(tasks)
+                .map(|task| {
+                    let client = Arc::clone(&client);
+                    let counter = Arc::clone(&counter);
+                    let pb = Arc::clone(&pb_clone);
+                    let urls = download::url_candidates(&task.url, source);
+                    tokio::spawn(async move {
+                        let result = download::download_file(
+                            &client,
+                            &urls,
+                            &task.path,
+                            task.sha1.as_deref(),
+                            task.size,
+                        )
+                        .await;
+                        if result.is_ok() {
+                            let downloaded = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                            pb.set_position(downloaded);
+                            crate::common::output::progress(
+                                "downloads",
+                                downloaded,
+                                pb.length().unwrap_or(0),
+                                "Downloading files",
+                            );
+                        }
+                        (task, result)
+                    })
                 })
-            })
-            .buffer_unordered(MAX_CONCURRENT_DOWNLOADS)
-            .collect::<Vec<_>>()
-            .await;
+                .buffer_unordered(MAX_CONCURRENT_DOWNLOADS)
+                .collect::<Vec<_>>()
+                .await;
 
-        // Check for errors
-        let mut failures = Vec::new();
-        for result in download_results {
-            match result {
-                Ok((_, Ok(()))) => {}
-                Ok((task, Err(e))) => {
-                    let message = format!("{} ({}): {}", task.task_type, task.url, e);
-                    crate::outwarn!("Failed to download {}", message);
-                    failures.push(message);
-                }
-                Err(join_error) => {
-                    let message = format!("download task failed: {}", join_error);
-                    crate::outwarn!("Failed to download {}", message);
-                    failures.push(message);
+            // Check for errors
+            let mut failures = Vec::new();
+            for result in download_results {
+                match result {
+                    Ok((_, Ok(()))) => {}
+                    Ok((task, Err(e))) => {
+                        let message = format!("{} ({}): {}", task.task_type, task.url, e);
+                        crate::outwarn!("Failed to download {}", message);
+                        failures.push(message);
+                    }
+                    Err(join_error) => {
+                        let message = format!("download task failed: {}", join_error);
+                        crate::outwarn!("Failed to download {}", message);
+                        failures.push(message);
+                    }
                 }
             }
-        }
-        ensure_downloads_succeeded(failures)?;
+            ensure_downloads_succeeded(failures)?;
 
-        pb.finish_with_message(format!(
-            "Downloaded {} files",
-            counter.load(Ordering::SeqCst)
-        ));
+            pb.finish_with_message(format!(
+                "Downloaded {} files",
+                counter.load(Ordering::SeqCst)
+            ));
+        }
 
         // Extract native libraries
         let total_extract = extraction_tasks.len() as u64;
@@ -367,7 +475,7 @@ impl Installer {
         }
         for (index, (jar_path, extract_dir)) in extraction_tasks.into_iter().enumerate() {
             if jar_path.exists() {
-                self.extract_lwjgl3_native_library(&jar_path, &extract_dir)?;
+                extract_native_library(&jar_path, &extract_dir)?;
             }
             crate::common::output::progress(
                 "extract",
@@ -383,7 +491,7 @@ impl Installer {
 
     async fn fetch_version_details(
         &self,
-        client: &Client,
+        client: &reqwest::Client,
         version_id: &str,
     ) -> anyhow::Result<(VersionInfo, VersionDetails)> {
         let manifest: VersionManifest =
@@ -407,14 +515,27 @@ impl Installer {
         tasks: &mut Vec<DownloadTask>,
         extraction_tasks: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
     ) {
+        let mut seen_download_paths: HashSet<std::path::PathBuf> =
+            tasks.iter().map(|task| task.path.clone()).collect();
+        let mut seen_extraction_jars: HashSet<std::path::PathBuf> = extraction_tasks
+            .iter()
+            .map(|(jar_path, _)| jar_path.clone())
+            .collect();
+
         for library in &version_details.libraries {
             if !library.is_allowed_for_current_platform() {
                 continue;
             }
 
             if let Some(artifact) = library.artifact() {
+                if artifact.url.is_empty() {
+                    continue;
+                }
                 let library_path = self.libraries_dir.join(&artifact.path);
-                if !library_path.exists() {
+                let sha1 = (!artifact.sha1.is_empty()).then(|| artifact.sha1.clone());
+                if !download::is_valid_cached_file(&library_path, sha1.as_deref(), artifact.size)
+                    && seen_download_paths.insert(library_path.clone())
+                {
                     if let Some(parent) = library_path.parent() {
                         let _ = fs::create_dir_all(parent);
                     }
@@ -422,7 +543,7 @@ impl Installer {
                         url: artifact.url.clone(),
                         path: library_path,
                         task_type: "library".to_string(),
-                        sha1: (!artifact.sha1.is_empty()).then(|| artifact.sha1.clone()),
+                        sha1,
                         size: artifact.size,
                     });
                 }
@@ -435,7 +556,11 @@ impl Installer {
             std::env::consts::ARCH,
         ) {
             let native_path = self.libraries_dir.join(&artifact.path);
-            if !native_path.exists() {
+            let sha1 = (!artifact.sha1.is_empty()).then(|| artifact.sha1.clone());
+            if !artifact.url.is_empty()
+                && !download::is_valid_cached_file(&native_path, sha1.as_deref(), artifact.size)
+                && seen_download_paths.insert(native_path.clone())
+            {
                 if let Some(parent) = native_path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
@@ -443,11 +568,13 @@ impl Installer {
                     url: artifact.url.clone(),
                     path: native_path.clone(),
                     task_type: "native".to_string(),
-                    sha1: (!artifact.sha1.is_empty()).then(|| artifact.sha1.clone()),
+                    sha1,
                     size: artifact.size,
                 });
             }
-            extraction_tasks.push((native_path, version_natives_dir.to_path_buf()));
+            if seen_extraction_jars.insert(native_path.clone()) {
+                extraction_tasks.push((native_path, version_natives_dir.to_path_buf()));
+            }
         }
     }
 
@@ -459,64 +586,43 @@ impl Installer {
         tasks: &mut Vec<DownloadTask>,
         extraction_tasks: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
     ) {
-        let mut lwjgl_versions: HashMap<String, String> = HashMap::new();
-        let target_lwjgl_modules: HashSet<&str> = [
-            "lwjgl",
-            "lwjgl-glfw",
-            "lwjgl-jemalloc",
-            "lwjgl-openal",
-            "lwjgl-opengl",
-            "lwjgl-stb",
-            "lwjgl-tinyfd",
-            "lwjgl-freetype",
-        ]
-        .iter()
-        .cloned()
-        .collect();
-
-        for lib in &version_details.libraries {
-            if !lib.is_allowed_for_current_platform() {
-                continue;
-            }
-
-            // The version manifest already provides an arm64 native for this library.
-            if manifest_has_linux_arm64_native(lib) {
-                continue;
-            }
-
-            if lib.name.starts_with("org.lwjgl:") {
-                let parts: Vec<&str> = lib.name.split(':').collect();
-                if parts.len() == 3 {
-                    let artifact_id = parts[1];
-                    let version = parts[2];
-                    if target_lwjgl_modules.contains(artifact_id) {
-                        lwjgl_versions.insert(artifact_id.to_string(), version.to_string());
-                    }
-                }
-            }
-        }
-
+        let lwjgl_versions = missing_lwjgl_arm64_modules(&version_details.libraries);
         if lwjgl_versions.is_empty() {
             return;
         }
 
+        let mut seen_download_paths: HashSet<std::path::PathBuf> =
+            tasks.iter().map(|task| task.path.clone()).collect();
+        let mut seen_extraction_jars: HashSet<std::path::PathBuf> = extraction_tasks
+            .iter()
+            .map(|(jar_path, _)| jar_path.clone())
+            .collect();
+
         for (module_artifact_id, module_version) in &lwjgl_versions {
             let classifier = "natives-linux-arm64";
             let url = lwjgl_native_url(module_artifact_id, module_version, classifier);
-
-            let temp_file_path = std::env::temp_dir().join(format!(
-                "mclc-{}-{}-{}.jar",
-                module_artifact_id, module_version, classifier
+            let jar_path = self.libraries_dir.join(format!(
+                "org/lwjgl/{}/{}/{}-{}-{}.jar",
+                module_artifact_id, module_version, module_artifact_id, module_version, classifier
             ));
 
-            tasks.push(DownloadTask {
-                url,
-                path: temp_file_path.clone(),
-                task_type: "arm64-native".to_string(),
-                sha1: None,
-                size: None,
-            });
-            extraction_tasks.push((temp_file_path, version_natives_dir.to_path_buf()));
+            if !download::is_valid_cached_file(&jar_path, None, None)
+                && seen_download_paths.insert(jar_path.clone())
+            {
+                if let Some(parent) = jar_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                tasks.push(DownloadTask {
+                    url,
+                    path: jar_path.clone(),
+                    task_type: "arm64-native".to_string(),
+                    sha1: None,
+                    size: None,
+                });
+            }
+            if seen_extraction_jars.insert(jar_path.clone()) {
+                extraction_tasks.push((jar_path, version_natives_dir.to_path_buf()));
+            }
         }
     }
 
@@ -530,12 +636,19 @@ impl Installer {
         let assets_index: AssetsIndex = serde_json::from_str(&asset_index_content)
             .with_context(|| format!("Failed to parse asset index: {:?}", asset_index_path))?;
 
-        for (_name, asset_object) in &assets_index.objects {
+        let mut seen_paths: HashSet<std::path::PathBuf> =
+            tasks.iter().map(|task| task.path.clone()).collect();
+
+        for asset_object in assets_index.objects.values() {
             let hash = &asset_object.hash;
-            let first_two = &hash[..2];
+            let Some(first_two) = hash.get(..2).filter(|prefix| prefix.is_ascii()) else {
+                anyhow::bail!("Invalid asset hash '{}' in {:?}", hash, asset_index_path);
+            };
             let asset_path = self.assets_objects_dir.join(first_two).join(hash);
 
-            if !asset_path.exists() {
+            if !download::is_valid_cached_file(&asset_path, Some(hash), Some(asset_object.size))
+                && seen_paths.insert(asset_path.clone())
+            {
                 if let Some(parent) = asset_path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
@@ -552,60 +665,6 @@ impl Installer {
 
         Ok(())
     }
-
-    fn extract_lwjgl3_native_library(
-        &self,
-        jar_path: &Path,
-        extract_dir: &Path,
-    ) -> anyhow::Result<()> {
-        let file = std::fs::File::open(jar_path)
-            .with_context(|| format!("Failed to open native JAR file: {:?}", jar_path))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .with_context(|| format!("Failed to read ZIP archive: {:?}", jar_path))?;
-
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i).with_context(|| {
-                format!(
-                    "Failed to get file entry {} from archive: {:?}",
-                    i, jar_path
-                )
-            })?;
-            let outpath = extract_dir.join(file.mangled_name().with_context(|| {
-                format!(
-                    "Failed to get entry name {} from archive: {:?}",
-                    i, jar_path
-                )
-            })?);
-            let file_name = file
-                .name()
-                .with_context(|| {
-                    format!(
-                        "Failed to get entry name {} from archive: {:?}",
-                        i, jar_path
-                    )
-                })?
-                .to_lowercase();
-
-            if file_name.ends_with(".dll")
-                || file_name.ends_with(".so")
-                || file_name.ends_with(".dylib")
-            {
-                if let Some(p) = outpath.parent() {
-                    if !p.exists() {
-                        fs::create_dir_all(p).with_context(|| {
-                            format!("Failed to create directory for native file: {:?}", p)
-                        })?;
-                    }
-                }
-                let mut outfile = std::fs::File::create(&outpath).with_context(|| {
-                    format!("Failed to create output file for native: {:?}", outpath)
-                })?;
-                std::io::copy(&mut file, &mut outfile)
-                    .with_context(|| format!("Failed to write native file: {:?}", outpath))?;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -613,6 +672,7 @@ mod tests {
     use super::*;
     use crate::common::models::VersionDetails;
     use crate::test_http;
+    use reqwest::Client;
     use sha1::{Digest, Sha1};
 
     fn sha1_hex(data: &[u8]) -> String {
@@ -965,5 +1025,112 @@ mod tests {
             expected_library_tasks,
             "libraries disallowed by rules must not be downloaded"
         );
+    }
+
+    #[test]
+    fn arm64_workaround_skips_when_separate_arm64_library_entry_exists() {
+        let libraries: Vec<crate::common::models::Library> = serde_json::from_str(
+            r#"[
+                { "name": "org.lwjgl:lwjgl:3.3.3" },
+                { "name": "org.lwjgl:lwjgl:3.3.3:natives-linux-arm64" },
+                { "name": "org.lwjgl:lwjgl-stb:3.3.3" }
+            ]"#,
+        )
+        .unwrap();
+
+        let missing = missing_lwjgl_arm64_modules(&libraries);
+        assert!(!missing.contains_key("lwjgl"));
+        assert_eq!(missing.get("lwjgl-stb").map(String::as_str), Some("3.3.3"));
+    }
+
+    #[test]
+    fn asset_collection_deduplicates_shared_hashes_and_rejects_short_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let installer = test_installer(dir.path());
+        let index_path = dir.path().join("index.json");
+        fs::write(
+            &index_path,
+            r#"{
+                "objects": {
+                    "a.ogg": { "hash": "abcdef1234", "size": 10 },
+                    "b.ogg": { "hash": "abcdef1234", "size": 10 }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let mut tasks = Vec::new();
+        installer
+            .collect_asset_download_tasks(&index_path, &mut tasks)
+            .unwrap();
+        assert_eq!(tasks.len(), 1);
+
+        let bad_index_path = dir.path().join("bad.json");
+        fs::write(
+            &bad_index_path,
+            r#"{ "objects": { "bad": { "hash": "x", "size": 1 } } }"#,
+        )
+        .unwrap();
+        let mut bad_tasks = Vec::new();
+        assert!(
+            installer
+                .collect_asset_download_tasks(&bad_index_path, &mut bad_tasks)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn library_collection_queues_truncated_cache_and_skips_empty_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let installer = test_installer(dir.path());
+        let lib_path = installer.libraries_dir.join("test/lib.jar");
+        fs::create_dir_all(lib_path.parent().unwrap()).unwrap();
+        fs::write(&lib_path, b"short").unwrap();
+
+        let details: VersionDetails = serde_json::from_str(
+            r#"{
+                "id": "test",
+                "type": "release",
+                "mainClass": "Main",
+                "libraries": [
+                    {
+                        "name": "test:lib:1.0",
+                        "downloads": {
+                            "artifact": {
+                                "url": "https://example.invalid/lib.jar",
+                                "sha1": "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d",
+                                "path": "test/lib.jar",
+                                "size": 5
+                            }
+                        }
+                    },
+                    {
+                        "name": "test:local:1.0",
+                        "downloads": {
+                            "artifact": {
+                                "url": "",
+                                "sha1": "",
+                                "path": "test/local.jar",
+                                "size": 5
+                            }
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mut tasks = Vec::new();
+        let mut extraction_tasks = Vec::new();
+        installer.collect_library_download_tasks(
+            &details,
+            "test",
+            dir.path(),
+            &mut tasks,
+            &mut extraction_tasks,
+        );
+
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].path, lib_path);
     }
 }

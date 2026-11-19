@@ -1,7 +1,5 @@
 use crate::auth::Authenticator;
-use crate::auth::yggdrasil::{
-    YggdrasilAccount, YggdrasilAuthenticator, YggdrasilProfile, format_uuid, offline_uuid,
-};
+use crate::auth::yggdrasil::{YggdrasilAccount, YggdrasilAuthenticator, format_uuid, offline_uuid};
 use crate::cli::{AuthType, InstanceAction};
 use crate::game::instance::InstanceStore;
 use crate::game::launch_manager::LauncherManager;
@@ -164,21 +162,17 @@ pub async fn launch(manager: &LauncherManager, options: LaunchOptions) -> anyhow
                 .await
             {
                 crate::outln!("Token expired, refreshing...");
-                let profile_for_refresh = YggdrasilProfile {
-                    id: account.uuid.replace('-', ""),
-                    name: account.name.clone(),
-                    properties: None,
-                };
+                // Never send selectedProfile when refreshing a token that already has a bound profile.
                 let response = authenticator
-                    .refresh(
-                        &account.access_token,
-                        Some(&account.client_token),
-                        Some(profile_for_refresh),
-                    )
+                    .refresh(&account.access_token, Some(&account.client_token), None)
                     .await?;
                 let updated_account = YggdrasilAccount {
                     access_token: response.access_token,
                     client_token: response.client_token,
+                    name: response
+                        .selected_profile
+                        .map(|profile| profile.name)
+                        .unwrap_or_else(|| account.name.clone()),
                     ..account.clone()
                 };
                 manager.save_account(&updated_account)?;
@@ -194,7 +188,12 @@ pub async fn launch(manager: &LauncherManager, options: LaunchOptions) -> anyhow
 
             let jar_path = match options.authlib_jar {
                 Some(path) => std::path::PathBuf::from(path),
-                None => manager.get_authlib_injector().get_or_download().await?,
+                None => {
+                    manager
+                        .get_authlib_injector()
+                        .get_or_download(manager.installer.source)
+                        .await?
+                }
             };
             let prefetched = authenticator.pre_fetch_metadata().await?;
 

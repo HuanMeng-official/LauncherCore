@@ -1,4 +1,5 @@
 use crate::common::models::*;
+use crate::net::download::{self, DownloadSource};
 use anyhow::Context;
 use base64::Engine as _;
 use futures_util::StreamExt;
@@ -46,7 +47,7 @@ pub(crate) fn offline_uuid(username: &str) -> String {
 
 /// Returns the formatted UUID with dashes
 pub(crate) fn format_uuid(uuid: &str) -> String {
-    if uuid.len() == 32 {
+    if uuid.len() == 32 && uuid.is_ascii() {
         format!(
             "{}-{}-{}-{}-{}",
             &uuid[0..8],
@@ -96,7 +97,7 @@ impl YggdrasilAuthenticator {
     pub fn new(api_url: String) -> Self {
         Self {
             api_url: api_url.trim_end_matches('/').to_string(),
-            client: Client::new(),
+            client: download::http_client(),
         }
     }
 
@@ -109,25 +110,24 @@ impl YggdrasilAuthenticator {
             url = format!("https://{}", url);
         }
 
-        let client = Client::new();
+        let client = download::http_client();
         let res = client.get(&url).send().await?;
 
         if res.status().is_success() {
             if let Some(ali_header) = res.headers().get("X-Authlib-Injector-API-Location") {
                 let ali_value = ali_header.to_str().unwrap_or("");
                 if !ali_value.is_empty() {
-                    // Make it absolute URL
-                    let resolved_url = url::Url::parse(&url)?;
-                    let absolute_url = resolved_url.join(ali_value)?;
-                    let absolute_str = absolute_url.to_string();
-                    if absolute_str != url {
-                        return Ok(absolute_str.trim_end_matches('/').to_string());
+                    // Resolve relative ALI locations against the final post-redirect URL.
+                    let absolute_url = res.url().join(ali_value)?;
+                    let absolute_str = absolute_url.as_str().trim_end_matches('/').to_string();
+                    if absolute_str != res.url().as_str().trim_end_matches('/') {
+                        return Ok(absolute_str);
                     }
                 }
             }
         }
 
-        Ok(url.trim_end_matches('/').to_string())
+        Ok(res.url().as_str().trim_end_matches('/').to_string())
     }
 
     pub async fn get_api_metadata(&self) -> anyhow::Result<YggdrasilApiMetadata> {
@@ -398,9 +398,13 @@ impl AuthlibInjector {
         Self { cache_dir }
     }
 
-    pub async fn get_or_download(&self) -> anyhow::Result<PathBuf> {
-        self.get_or_download_from(AUTHLIB_INJECTOR_API_BASE, AUTHLIB_INJECTOR_API_MIRROR)
-            .await
+    pub async fn get_or_download(&self, source: DownloadSource) -> anyhow::Result<PathBuf> {
+        let candidates: &[&str] = match source {
+            DownloadSource::Official => &[AUTHLIB_INJECTOR_API_BASE],
+            DownloadSource::Bmclapi => &[AUTHLIB_INJECTOR_API_MIRROR, AUTHLIB_INJECTOR_API_BASE],
+            DownloadSource::Auto => &[AUTHLIB_INJECTOR_API_BASE, AUTHLIB_INJECTOR_API_MIRROR],
+        };
+        self.get_or_download_from_candidates(candidates).await
     }
 
     async fn fetch_latest(&self, client: &Client, api_base: &str) -> anyhow::Result<AuthlibLatest> {
@@ -409,25 +413,57 @@ impl AuthlibInjector {
         Ok(response.json::<AuthlibLatest>().await?)
     }
 
+    #[cfg(test)]
     async fn get_or_download_from(
         &self,
         api_base: &str,
         mirror_base: &str,
     ) -> anyhow::Result<PathBuf> {
-        let jar_path = self.cache_dir.join("authlib-injector.jar");
-        let client = Client::new();
+        self.get_or_download_from_candidates(&[api_base, mirror_base])
+            .await
+    }
 
-        let latest = match self.fetch_latest(&client, api_base).await {
-            Ok(latest) => latest,
-            Err(error) => {
+    async fn get_or_download_from_candidates(
+        &self,
+        api_bases: &[&str],
+    ) -> anyhow::Result<PathBuf> {
+        let jar_path = self.cache_dir.join("authlib-injector.jar");
+        let client = download::http_client();
+
+        let mut latest = None;
+        let mut last_error = None;
+        for (index, api_base) in api_bases.iter().enumerate() {
+            match self.fetch_latest(&client, api_base).await {
+                Ok(found) => {
+                    latest = Some(found);
+                    break;
+                }
+                Err(error) => {
+                    if index + 1 < api_bases.len() {
+                        crate::outwarn!(
+                            "Failed to query authlib-injector API ({}), trying fallback...",
+                            error
+                        );
+                    }
+                    last_error = Some(error);
+                }
+            }
+        }
+
+        let Some(latest) = latest else {
+            let cached_non_empty = jar_path.is_file()
+                && fs::metadata(&jar_path)
+                    .map(|metadata| metadata.len() > 0)
+                    .unwrap_or(false);
+            let error = last_error.unwrap_or_else(|| anyhow::anyhow!("No API base configured"));
+            if cached_non_empty {
                 crate::outwarn!(
-                    "Failed to query authlib-injector API ({}), trying BMCLAPI mirror...",
+                    "Failed to check authlib-injector updates ({}), using cached jar.",
                     error
                 );
-                self.fetch_latest(&client, mirror_base)
-                    .await
-                    .context("Failed to query authlib-injector mirror")?
+                return Ok(jar_path);
             }
+            return Err(error).context("Failed to query authlib-injector metadata");
         };
 
         let expected_sha256 = latest
@@ -467,6 +503,7 @@ impl AuthlibInjector {
             .with_context(|| format!("Failed to create temporary file in {:?}", self.cache_dir))?;
         let mut hasher = Sha256::new();
         let mut downloaded = 0u64;
+        let mut next_report_bytes = 1024 * 1024u64;
         let mut stream = response.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
@@ -475,7 +512,10 @@ impl AuthlibInjector {
             hasher.update(&chunk);
             downloaded += chunk.len() as u64;
 
-            if total_bytes > 0 && (downloaded % (1024 * 1024) == 0 || downloaded == total_bytes) {
+            if total_bytes > 0 && (downloaded >= next_report_bytes || downloaded == total_bytes) {
+                while downloaded >= next_report_bytes {
+                    next_report_bytes += 1024 * 1024;
+                }
                 crate::outln!(
                     "Downloaded: {}/{} bytes ({:.0}%)",
                     downloaded,
@@ -651,5 +691,73 @@ mod tests {
             .unwrap();
 
         assert_eq!(std::fs::read(path).unwrap(), jar);
+    }
+
+    #[test]
+    fn format_uuid_handles_valid_malformed_and_non_ascii_inputs() {
+        assert_eq!(
+            format_uuid("00112233445566778899aabbccddeeff"),
+            "00112233-4455-6677-8899-aabbccddeeff"
+        );
+        assert_eq!(
+            format_uuid("00112233-4455-6677-8899-aabbccddeeff"),
+            "00112233-4455-6677-8899-aabbccddeeff"
+        );
+        assert_eq!(format_uuid("short"), "short");
+        let non_ascii = "中文".repeat(5) + "12"; // 32 bytes but non-ASCII
+        assert_eq!(non_ascii.len(), 32);
+        assert_eq!(format_uuid(&non_ascii), non_ascii);
+    }
+
+    #[test]
+    fn refresh_request_omits_selected_profile_when_none() {
+        let request = YggdrasilRefreshRequest {
+            access_token: "token".to_string(),
+            client_token: Some("client".to_string()),
+            request_user: true,
+            selected_profile: None,
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(!serialized.contains("selectedProfile"));
+    }
+
+    #[tokio::test]
+    async fn uses_cached_authlib_injector_when_api_is_unreachable() {
+        let server = test_http::serve_sequence(vec![
+            test_http::response("500 Internal Server Error", &[], b"unavailable"),
+            test_http::response("500 Internal Server Error", &[], b"unavailable"),
+        ])
+        .await;
+        let temp = tempfile::tempdir().unwrap();
+        let cached = temp.path().join("authlib-injector.jar");
+        std::fs::write(&cached, b"cached-jar").unwrap();
+        let injector = AuthlibInjector::new(temp.path().to_path_buf());
+
+        let path = injector
+            .get_or_download_from(&server.base_url, &server.base_url)
+            .await
+            .unwrap();
+
+        assert_eq!(path, cached);
+        assert_eq!(std::fs::read(path).unwrap(), b"cached-jar");
+    }
+
+    #[tokio::test]
+    async fn resolve_api_url_resolves_relative_ali_against_redirect_target() {
+        let server = test_http::serve_sequence(vec![
+            test_http::response("302 Found", &[("Location", "/auth")], b""),
+            test_http::response(
+                "200 OK",
+                &[("X-Authlib-Injector-API-Location", "yggdrasil")],
+                b"",
+            ),
+        ])
+        .await;
+
+        let resolved = YggdrasilAuthenticator::resolve_api_url(&server.base_url)
+            .await
+            .unwrap();
+
+        assert_eq!(resolved, format!("{}/yggdrasil", server.base_url));
     }
 }

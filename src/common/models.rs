@@ -188,6 +188,21 @@ impl Library {
             size: self.size,
         })
     }
+
+    /// Returns the relative library JAR path under `libraries/`, supporting
+    /// Mojang `downloads`, Maven-coordinate (`url`), and local-only entries
+    /// (which omit both `downloads` and `url`).
+    pub fn local_path(&self) -> Option<String> {
+        if let Some(artifact) = self.artifact() {
+            return Some(artifact.path);
+        }
+
+        if self.downloads.is_none() && self.natives.is_none() {
+            return maven_path(&self.name);
+        }
+
+        None
+    }
 }
 
 /// Selects the best native artifact for the given platform, supporting both
@@ -240,6 +255,7 @@ pub(crate) fn selected_native_artifacts(
 
 fn native_classifier_score(name: &str, os: &str, arch: &str) -> Option<u8> {
     let classifier = name.split(':').nth(3)?;
+    let classifier = classifier.split('@').next().unwrap_or(classifier);
     let suffix = classifier.strip_prefix("natives-")?;
 
     let os_token = match os {
@@ -302,7 +318,8 @@ pub struct Rule {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OsRule {
-    pub name: String,
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub arch: Option<String>,
 }
@@ -313,9 +330,10 @@ impl Rule {
             return true;
         };
 
-        let name_matches = match (os_rule.name.as_str(), os) {
-            ("osx", "macos") | ("macos", "macos") => true,
-            (rule_name, actual_os) => rule_name == actual_os,
+        let name_matches = match (os_rule.name.as_deref(), os) {
+            (None, _) => true,
+            (Some("osx"), "macos") | (Some("macos"), "macos") => true,
+            (Some(rule_name), actual_os) => rule_name == actual_os,
         };
 
         let arch_matches = match &os_rule.arch {
@@ -583,7 +601,7 @@ pub struct YggdrasilRefreshRequest {
     pub client_token: Option<String>,
     #[serde(rename = "requestUser")]
     pub request_user: bool,
-    #[serde(rename = "selectedProfile")]
+    #[serde(rename = "selectedProfile", skip_serializing_if = "Option::is_none")]
     pub selected_profile: Option<YggdrasilProfile>,
 }
 
@@ -808,7 +826,7 @@ mod tests {
         let library = library_with_rules(vec![Rule {
             action: "allow".to_string(),
             os: Some(OsRule {
-                name: "windows".to_string(),
+                name: Some("windows".to_string()),
                 arch: None,
             }),
         }]);
@@ -823,13 +841,50 @@ mod tests {
         let library = library_with_rules(vec![Rule {
             action: "allow".to_string(),
             os: Some(OsRule {
-                name: "windows".to_string(),
+                name: Some("windows".to_string()),
                 arch: Some("x86".to_string()),
             }),
         }]);
 
         assert!(library.is_allowed_for("windows", "x86"));
         assert!(!library.is_allowed_for("windows", "x86_64"));
+    }
+
+    #[test]
+    fn library_rule_allows_arch_without_os_name() {
+        let library: Library = serde_json::from_str(
+            r#"{
+                "name": "test:arch:1.0",
+                "rules": [{ "action": "allow", "os": { "arch": "x86" } }]
+            }"#,
+        )
+        .unwrap();
+
+        assert!(library.is_allowed_for("windows", "x86"));
+        assert!(library.is_allowed_for("linux", "i686"));
+        assert!(!library.is_allowed_for("windows", "x86_64"));
+    }
+
+    #[test]
+    fn library_local_path_supports_local_only_entries() {
+        let local_only: Library = serde_json::from_str(r#"{"name": "optifine:OptiFine:1.21.1"}"#).unwrap();
+        assert_eq!(
+            local_only.local_path().as_deref(),
+            Some("optifine/OptiFine/1.21.1/OptiFine-1.21.1.jar")
+        );
+
+        let natives_only = library_with(all_classifiers(), None);
+        // library_with has downloads.artifact, whereas classifiers-only has no artifact
+        assert!(natives_only.local_path().is_some());
+        let classifiers_only: Library = serde_json::from_str(
+            r#"{
+                "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4",
+                "natives": { "windows": "natives-windows" },
+                "downloads": { "classifiers": {} }
+            }"#,
+        )
+        .unwrap();
+        assert!(classifiers_only.local_path().is_none());
     }
 
     #[test]
@@ -842,7 +897,7 @@ mod tests {
             Rule {
                 action: "disallow".to_string(),
                 os: Some(OsRule {
-                    name: "linux".to_string(),
+                    name: Some("linux".to_string()),
                     arch: None,
                 }),
             },

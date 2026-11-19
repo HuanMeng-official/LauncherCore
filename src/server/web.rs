@@ -47,6 +47,7 @@ struct Bridge {
     commands: mpsc::Sender<BridgeRequest>,
     pending: StdMutex<HashMap<u64, Pending>>,
     ready: watch::Sender<Option<Value>>,
+    exited: watch::Sender<bool>,
     clients: StdMutex<Vec<mpsc::UnboundedSender<Value>>>,
     alive: AtomicBool,
     next_id: AtomicU64,
@@ -176,22 +177,27 @@ fn spawn_launcher(
 
     let (commands, command_rx) = mpsc::channel(64);
     let (ready, _) = watch::channel(None);
+    let (exited, _) = watch::channel(false);
     let bridge = Arc::new(Bridge {
         commands,
         pending: StdMutex::new(HashMap::new()),
         ready,
+        exited,
         clients: StdMutex::new(Vec::new()),
         alive: AtomicBool::new(true),
         next_id: AtomicU64::new(1),
         stdin: AsyncMutex::new(stdin),
     });
 
-    tokio::spawn(read_launcher_output(bridge.clone(), stdout));
+    // Wait for stdout EOF before marking the launcher gone so buffered results
+    // (including the reply to `shutdown`) are never beaten by `child.wait()`.
+    let stdout_task = tokio::spawn(read_launcher_output(bridge.clone(), stdout));
     tokio::spawn(read_launcher_stderr(stderr));
     tokio::spawn(dispatch_requests(bridge.clone(), command_rx));
 
     let wait_bridge = bridge.clone();
     tokio::spawn(async move {
+        let _ = stdout_task.await;
         let status = child.wait().await;
         eprintln!("mclc json exited: {:?}", status);
         wait_bridge.launcher_gone();
@@ -220,7 +226,6 @@ async fn read_launcher_output(bridge: Arc<Bridge>, stdout: ChildStdout) {
             }
         }
     }
-    bridge.launcher_gone();
 }
 
 async fn read_launcher_stderr(stderr: ChildStderr) {
@@ -403,13 +408,25 @@ impl Bridge {
                 .send(Err("launcher process exited".into()));
         }
         self.broadcast(json!({"type": "launcher_exit", "id": null}));
+        let _ = self.exited.send_replace(true);
     }
 
     async fn request_shutdown(&self) {
+        if !self.alive.load(Ordering::SeqCst) {
+            return;
+        }
         let line = b"{\"id\":0,\"command\":\"shutdown\"}\n";
-        let mut stdin = self.stdin.lock().await;
-        let _ = stdin.write_all(line).await;
-        let _ = stdin.flush().await;
+        {
+            let mut stdin = self.stdin.lock().await;
+            let _ = stdin.write_all(line).await;
+            let _ = stdin.flush().await;
+        }
+        let mut exited_rx = self.exited.subscribe();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            exited_rx.wait_for(|&done| done),
+        )
+        .await;
     }
 }
 

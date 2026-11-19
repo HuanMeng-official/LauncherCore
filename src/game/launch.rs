@@ -1,6 +1,8 @@
 use crate::common::models::VersionDetails;
+use crate::game::install::{extract_native_library, is_native_library_file};
 use crate::game::java::select_java;
 use anyhow::Context;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -186,6 +188,11 @@ fn build_jvm_arguments(
     api_url: Option<&str>,
 ) -> Vec<String> {
     let mut args = Vec::new();
+    let custom_tokens: Vec<&str> = custom_args
+        .map(|args| args.split_whitespace().collect())
+        .unwrap_or_default();
+    let custom_sets_xmx = custom_tokens.iter().any(|arg| arg.starts_with("-Xmx"));
+    let custom_sets_xms = custom_tokens.iter().any(|arg| arg.starts_with("-Xms"));
 
     let manifest_jvm_arguments = version_details
         .arguments
@@ -194,8 +201,12 @@ fn build_jvm_arguments(
         .filter(|arguments| !arguments.is_empty());
 
     if let Some(arguments) = manifest_jvm_arguments {
-        args.push("-Xmx2G".to_string());
-        args.push("-Xms1G".to_string());
+        if !custom_sets_xmx {
+            args.push("-Xmx2G".to_string());
+        }
+        if !custom_sets_xms && !custom_sets_xmx {
+            args.push("-Xms1G".to_string());
+        }
 
         // ${version_name} inside JVM arguments refers to the resolved game
         // jar (e.g. 1.21.1), not the loader profile id. NeoForge relies on
@@ -210,7 +221,14 @@ fn build_jvm_arguments(
         };
         args.extend(evaluate_arguments(arguments, &jvm_ctx));
     } else {
-        args.extend(default_jvm_arguments(ctx.natives_dir));
+        for arg in default_jvm_arguments(ctx.natives_dir) {
+            if (arg.starts_with("-Xmx") && custom_sets_xmx)
+                || (arg.starts_with("-Xms") && (custom_sets_xms || custom_sets_xmx))
+            {
+                continue;
+            }
+            args.push(arg);
+        }
     }
 
     if let (Some(jar_path), Some(prefetched)) = (authlib_injector_jar, prefetched_metadata) {
@@ -430,7 +448,14 @@ impl Launcher {
             cmd.creation_flags(0x00000008); // DETACHED_PROCESS
         }
 
-        let _ = cmd.spawn().context("Failed to start Minecraft")?;
+        let mut child = cmd.spawn().context("Failed to start Minecraft")?;
+        if crate::common::output::is_json() {
+            // Long-lived JSON/web servers would otherwise leave exited game
+            // processes as zombies on Unix until the server exits.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
 
         crate::outln!("Minecraft launched successfully");
         crate::outln!("Please wait patiently for the game window to appear");
@@ -450,15 +475,14 @@ impl Launcher {
         let arch = std::env::consts::ARCH;
         let natives =
             crate::common::models::selected_native_artifacts(&version_details.libraries, os, arch);
-        let mut needs_extraction = false;
+        let mut to_extract = Vec::new();
 
         for artifact in &natives {
             let native_path = self.libraries_dir.join(&artifact.path);
 
             if native_path.exists() {
-                if !self.check_natives_exist(natives_dir) {
-                    needs_extraction = true;
-                    break;
+                if jar_needs_extraction(&native_path, natives_dir) {
+                    to_extract.push(native_path);
                 }
             } else {
                 crate::outwarn!(
@@ -468,95 +492,13 @@ impl Launcher {
             }
         }
 
-        if needs_extraction {
+        if !to_extract.is_empty() {
             crate::outln!("Extracting native libraries...");
-            for artifact in &natives {
-                let native_path = self.libraries_dir.join(&artifact.path);
-                if native_path.exists() {
-                    self.extract_lwjgl3_native_library(&native_path, natives_dir)?;
-                }
+            for native_path in to_extract {
+                extract_native_library(&native_path, natives_dir)?;
             }
         }
 
-        Ok(())
-    }
-
-    fn check_natives_exist(&self, natives_dir: &Path) -> bool {
-        if !natives_dir.exists() {
-            return false;
-        }
-
-        // Check for at least one native library file
-        let entries = match fs::read_dir(natives_dir) {
-            Ok(e) => e,
-            Err(_) => return false,
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let ext = path.extension();
-            if let Some(e) = ext {
-                match e.to_str() {
-                    Some("dll") | Some("so") | Some("dylib") => return true,
-                    _ => continue,
-                }
-            }
-        }
-
-        false
-    }
-
-    fn extract_lwjgl3_native_library(
-        &self,
-        jar_path: &Path,
-        extract_dir: &Path,
-    ) -> anyhow::Result<()> {
-        let file = std::fs::File::open(jar_path)
-            .with_context(|| format!("Failed to open native JAR file: {:?}", jar_path))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .with_context(|| format!("Failed to read ZIP archive: {:?}", jar_path))?;
-
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i).with_context(|| {
-                format!(
-                    "Failed to get file entry {} from archive: {:?}",
-                    i, jar_path
-                )
-            })?;
-            let outpath = extract_dir.join(file.mangled_name().with_context(|| {
-                format!(
-                    "Failed to get entry name {} from archive: {:?}",
-                    i, jar_path
-                )
-            })?);
-            let file_name = file
-                .name()
-                .with_context(|| {
-                    format!(
-                        "Failed to get entry name {} from archive: {:?}",
-                        i, jar_path
-                    )
-                })?
-                .to_lowercase();
-
-            if file_name.ends_with(".dll")
-                || file_name.ends_with(".so")
-                || file_name.ends_with(".dylib")
-            {
-                if let Some(p) = outpath.parent() {
-                    if !p.exists() {
-                        fs::create_dir_all(p).with_context(|| {
-                            format!("Failed to create directory for native file: {:?}", p)
-                        })?;
-                    }
-                }
-                let mut outfile = std::fs::File::create(&outpath).with_context(|| {
-                    format!("Failed to create output file for native: {:?}", outpath)
-                })?;
-                std::io::copy(&mut file, &mut outfile)
-                    .with_context(|| format!("Failed to write native file: {:?}", outpath))?;
-            }
-        }
         Ok(())
     }
 
@@ -565,11 +507,12 @@ impl Launcher {
             .jar
             .as_deref()
             .unwrap_or(&version_details.id);
-        let mut classpath = vec![
-            self.versions_dir
-                .join(jar_id)
-                .join(format!("{}.jar", jar_id)),
-        ];
+        let client_jar = self
+            .versions_dir
+            .join(jar_id)
+            .join(format!("{}.jar", jar_id));
+        let mut seen = HashSet::from([client_jar.clone()]);
+        let mut classpath = vec![client_jar];
 
         for library in &version_details.libraries {
             // Check if library should be included based on rules
@@ -577,10 +520,20 @@ impl Launcher {
                 continue;
             }
 
-            if let Some(artifact) = library.artifact() {
-                let library_path = self.libraries_dir.join(&artifact.path);
+            if let Some(rel_path) = library.local_path() {
+                let library_path = self.libraries_dir.join(rel_path);
                 if library_path.exists() {
-                    classpath.push(library_path);
+                    if seen.insert(library_path.clone()) {
+                        classpath.push(library_path);
+                    }
+                } else if library
+                    .artifact()
+                    .is_some_and(|artifact| !artifact.url.is_empty())
+                {
+                    crate::outwarn!(
+                        "Warning: Library not found: {:?}. Please run install first.",
+                        library_path
+                    );
                 }
             }
         }
@@ -591,6 +544,35 @@ impl Launcher {
             .collect::<Vec<_>>()
             .join(if cfg!(windows) { ";" } else { ":" }))
     }
+}
+
+fn jar_needs_extraction(jar_path: &Path, natives_dir: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(jar_path) else {
+        return true;
+    };
+    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        return true;
+    };
+
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index(i) else {
+            return true;
+        };
+        if entry.is_dir() {
+            continue;
+        }
+        let Some(relative_path) = entry.enclosed_name() else {
+            continue;
+        };
+        let Ok(entry_name) = entry.name() else {
+            return true;
+        };
+        if is_native_library_file(&entry_name) && !natives_dir.join(relative_path).is_file() {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -823,5 +805,97 @@ mod tests {
 
         assert_eq!(args.iter().filter(|arg| *arg == "-cp").count(), 1);
         assert!(args.contains(&"/libraries/a.jar:/libraries/b.jar".to_string()));
+    }
+
+    #[test]
+    fn custom_small_xmx_suppresses_default_xms1g() {
+        let details = details(
+            r#"{
+                "id": "1.21.1",
+                "type": "release",
+                "mainClass": "net.minecraft.client.main.Main",
+                "libraries": [],
+                "arguments": { "jvm": ["-Dfoo=bar"], "game": [] }
+            }"#,
+        );
+
+        let args = build_jvm_arguments(
+            &details,
+            &test_context("windows"),
+            Some("-Xmx512M"),
+            None,
+            None,
+            None,
+        );
+
+        assert!(!args.iter().any(|arg| arg == "-Xmx2G" || arg == "-Xms1G"));
+        assert!(args.contains(&"-Xmx512M".to_string()));
+    }
+
+    #[test]
+    fn native_extraction_detects_nested_natives_and_jnilib() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let jar_path = dir.path().join("natives.jar");
+        let natives_dir = dir.path().join("natives");
+        {
+            let file = fs::File::create(&jar_path).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            writer
+                .start_file(
+                    "windows/x64/org/lwjgl/lwjgl.dll",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+            writer.write_all(b"dll").unwrap();
+            writer
+                .start_file(
+                    "liblwjgl.jnilib",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+            writer.write_all(b"jnilib").unwrap();
+            writer.finish().unwrap();
+        }
+
+        assert!(jar_needs_extraction(&jar_path, &natives_dir));
+        extract_native_library(&jar_path, &natives_dir).unwrap();
+        assert!(!jar_needs_extraction(&jar_path, &natives_dir));
+        assert!(natives_dir.join("windows/x64/org/lwjgl/lwjgl.dll").is_file());
+        assert!(natives_dir.join("liblwjgl.jnilib").is_file());
+    }
+
+    #[test]
+    fn build_classpath_includes_local_only_libraries_without_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions_dir = dir.path().join("versions");
+        let libraries_dir = dir.path().join("libraries");
+        let assets_dir = dir.path().join("assets");
+        let local_jar = libraries_dir.join("optifine/OptiFine/1.0/OptiFine-1.0.jar");
+        fs::create_dir_all(local_jar.parent().unwrap()).unwrap();
+        fs::write(&local_jar, b"jar").unwrap();
+
+        let details = details(
+            r#"{
+                "id": "1.21.1",
+                "type": "release",
+                "mainClass": "Main",
+                "libraries": [
+                    { "name": "optifine:OptiFine:1.0" },
+                    { "name": "optifine:OptiFine:1.0" }
+                ]
+            }"#,
+        );
+        let launcher = Launcher {
+            minecraft_dir: dir.path().to_path_buf(),
+            versions_dir,
+            libraries_dir,
+            assets_dir,
+        };
+
+        let cp = launcher.build_classpath(&details).unwrap();
+        let local_str = local_jar.to_string_lossy().to_string();
+        assert_eq!(cp.matches(&local_str).count(), 1);
     }
 }

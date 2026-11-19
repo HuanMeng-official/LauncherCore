@@ -80,7 +80,7 @@ pub(super) async fn install(
     selection: Selection,
     options: ProfileOptions<'_>,
 ) -> anyhow::Result<String> {
-    let client = reqwest::Client::new();
+    let client = download::http_client();
     let entries: Vec<LoaderEntry> =
         download::fetch_json(&client, versions_url, installer.source).await?;
 

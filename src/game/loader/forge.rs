@@ -17,7 +17,7 @@ pub(super) async fn install_forge(
     requested_version: Option<&str>,
     java_path_override: Option<String>,
 ) -> anyhow::Result<String> {
-    let client = reqwest::Client::new();
+    let client = download::http_client();
     let forge_version = match requested_version {
         Some(version) => normalize_forge_version(game_version, version),
         None => {

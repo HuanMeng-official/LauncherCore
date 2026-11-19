@@ -3,12 +3,71 @@ use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
 use sha1::{Digest, Sha1};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
 
 pub const MAX_ATTEMPTS: usize = 3;
 pub const RETRY_DELAY: Duration = Duration::from_millis(300);
+
+/// Builds a shared-policy HTTP client with connect and stalled-stream timeouts
+/// so hung mirrors cannot freeze serial commands indefinitely.
+pub fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+fn file_sha1(path: &Path) -> anyhow::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha1::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect())
+}
+
+/// Returns whether `path` already exists on disk and satisfies the supplied
+/// size and SHA-1 expectations.
+pub fn is_valid_cached_file(
+    path: &Path,
+    expected_sha1: Option<&str>,
+    expected_size: Option<u64>,
+) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    if let Some(expected) = expected_size {
+        let matches = fs::metadata(path)
+            .map(|metadata| metadata.len() == expected)
+            .unwrap_or(false);
+        if !matches {
+            return false;
+        }
+    }
+
+    if let Some(expected) = expected_sha1.filter(|sha1| !sha1.is_empty()) {
+        return file_sha1(path)
+            .map(|actual| actual.eq_ignore_ascii_case(expected))
+            .unwrap_or(false);
+    }
+
+    true
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum DownloadSource {
@@ -246,17 +305,8 @@ async fn download_file_with_policy(
     attempts: usize,
     delay: Duration,
 ) -> anyhow::Result<()> {
-    if path.exists() {
-        let size_matches = expected_size
-            .map(|expected| {
-                fs::metadata(path)
-                    .map(|metadata| metadata.len() == expected)
-                    .unwrap_or(false)
-            })
-            .unwrap_or(true);
-        if size_matches {
-            return Ok(());
-        }
+    if is_valid_cached_file(path, expected_sha1, expected_size) {
+        return Ok(());
     }
 
     let mut errors = Vec::new();
@@ -342,7 +392,7 @@ async fn download_once(
         }
     }
 
-    if let Some(expected) = expected_sha1 {
+    if let Some(expected) = expected_sha1.filter(|sha1| !sha1.is_empty()) {
         let actual: String = hasher
             .finalize()
             .iter()
@@ -572,5 +622,47 @@ mod tests {
 
         assert_eq!(payload.value, 42);
         assert_eq!(server.requests.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn replaces_same_size_corrupt_cached_file_when_sha1_mismatches() {
+        let body = b"hello";
+        let expected_sha1 = sha1_hex(body);
+        let server = test_http::serve_once(test_http::response("200 OK", &[], body)).await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("asset.bin");
+        fs::write(&path, b"world").unwrap();
+
+        download_file_with_policy(
+            &http_client(),
+            &[format!("{}/asset.bin", server.base_url)],
+            &path,
+            Some(&expected_sha1),
+            Some(body.len() as u64),
+            1,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), body);
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn valid_cached_file_checks_size_and_sha1() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.bin");
+        fs::write(&path, b"hello").unwrap();
+        let sha1 = sha1_hex(b"hello");
+
+        assert!(is_valid_cached_file(&path, Some(&sha1), Some(5)));
+        assert!(is_valid_cached_file(&path, Some(""), Some(5)));
+        assert!(!is_valid_cached_file(&path, Some(&sha1), Some(6)));
+        assert!(!is_valid_cached_file(
+            &path,
+            Some("0000000000000000000000000000000000000000"),
+            None
+        ));
     }
 }

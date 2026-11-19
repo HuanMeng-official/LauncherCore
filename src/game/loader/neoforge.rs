@@ -16,7 +16,7 @@ pub(super) async fn install_neoforge(
     requested_version: Option<&str>,
     java_path_override: Option<String>,
 ) -> anyhow::Result<String> {
-    let client = reqwest::Client::new();
+    let client = download::http_client();
 
     // NeoForge 1.20.1 is published as `net.neoforged:forge` with versions
     // like `1.20.1-47.1.106`; later versions use `net.neoforged:neoforge`.

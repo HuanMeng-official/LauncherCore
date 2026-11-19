@@ -1,7 +1,6 @@
 pub mod yggdrasil;
 
 use crate::common::models::*;
-use reqwest::Client;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MSA_REFRESH_MARGIN_SECS: u64 = 300;
@@ -44,7 +43,7 @@ impl Authenticator {
     }
 
     pub async fn authenticate_with_msa(&self) -> anyhow::Result<MicrosoftTokenResponse> {
-        let client = Client::new();
+        let client = crate::net::download::http_client();
 
         crate::outln!("Starting Microsoft Account login...");
         let params = [
@@ -77,7 +76,7 @@ impl Authenticator {
 
         let start_time = std::time::Instant::now();
         let timeout_duration = std::time::Duration::from_secs(device_code_res.expires_in);
-        let poll_interval = std::time::Duration::from_secs(device_code_res.interval.max(1));
+        let mut poll_interval = std::time::Duration::from_secs(device_code_res.interval.max(1));
 
         loop {
             if start_time.elapsed() > timeout_duration {
@@ -105,6 +104,7 @@ impl Authenticator {
                                 }
                                 "slow_down" => {
                                     crate::outln!("Server requested to slow down polling.");
+                                    poll_interval += std::time::Duration::from_secs(5);
                                     continue;
                                 }
                                 "expired_token" => {
@@ -133,7 +133,7 @@ impl Authenticator {
     }
 
     pub async fn get_xbl_token(&self, ms_token: &str) -> anyhow::Result<(String, String)> {
-        let client = Client::new();
+        let client = crate::net::download::http_client();
         let request_body = serde_json::json!({
             "Properties": {
                 "AuthMethod": "RPS",
@@ -171,7 +171,7 @@ impl Authenticator {
     }
 
     pub async fn get_xsts_token(&self, xbl_token: &str) -> anyhow::Result<(String, String)> {
-        let client = Client::new();
+        let client = crate::net::download::http_client();
         let request_body = serde_json::json!({
             "Properties": {
                 "SandboxId": "RETAIL",
@@ -231,7 +231,7 @@ impl Authenticator {
         xsts_token: &str,
         user_hash: &str,
     ) -> anyhow::Result<MinecraftLoginResponse> {
-        let client = Client::new();
+        let client = crate::net::download::http_client();
         let request_body = serde_json::json!({
             "identityToken": format!("XBL3.0 x={};{}", user_hash, xsts_token)
         });
@@ -264,7 +264,7 @@ impl Authenticator {
         &self,
         mc_access_token: &str,
     ) -> anyhow::Result<MinecraftProfile> {
-        let client = Client::new();
+        let client = crate::net::download::http_client();
 
         let res = client
             .get(MC_PROFILE_URL)
@@ -296,7 +296,7 @@ impl Authenticator {
         refresh_token: &str,
         token_url: &str,
     ) -> anyhow::Result<MicrosoftTokenResponse> {
-        let client = Client::new();
+        let client = crate::net::download::http_client();
         let params = [
             ("grant_type", "refresh_token"),
             ("client_id", self.client_id.as_str()),
@@ -347,14 +347,7 @@ impl Authenticator {
             .get_minecraft_profile(&mc_login_res.access_token)
             .await?;
 
-        let formatted_uuid = format!(
-            "{}-{}-{}-{}-{}",
-            &profile.id[0..8],
-            &profile.id[8..12],
-            &profile.id[12..16],
-            &profile.id[16..20],
-            &profile.id[20..32]
-        );
+        let formatted_uuid = crate::auth::yggdrasil::format_uuid(&profile.id);
 
         Ok(AuthCache {
             access_token: mc_login_res.access_token,

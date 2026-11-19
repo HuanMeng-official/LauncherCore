@@ -108,21 +108,39 @@ impl InstanceStore {
             .ok_or_else(|| anyhow!("Instance '{}' not found", name))?;
 
         if delete_files && entry.path.exists() {
-            if entry.path.parent().is_none() {
+            let target_path = normalize_path(&entry.path);
+            if target_path.parent().is_none() {
                 bail!(
                     "Refusing to delete filesystem root {}",
                     entry.path.display()
                 );
             }
-            if let Ok(current_dir) = std::env::current_dir()
-                && current_dir.starts_with(&entry.path)
-            {
-                bail!(
-                    "Refusing to delete {} because it contains the current directory",
-                    entry.path.display()
-                );
+            if let Ok(current_dir) = std::env::current_dir() {
+                let normalized_cwd = normalize_path(&current_dir);
+                if normalized_cwd.starts_with(&target_path) {
+                    bail!(
+                        "Refusing to delete {} because it contains the current directory",
+                        entry.path.display()
+                    );
+                }
+                if let (Ok(cwd), Ok(target)) =
+                    (fs::canonicalize(&current_dir), fs::canonicalize(&target_path))
+                {
+                    if target.parent().is_none() {
+                        bail!(
+                            "Refusing to delete filesystem root {}",
+                            entry.path.display()
+                        );
+                    }
+                    if cwd.starts_with(&target) {
+                        bail!(
+                            "Refusing to delete {} because it contains the current directory",
+                            entry.path.display()
+                        );
+                    }
+                }
             }
-            fs::remove_dir_all(&entry.path).with_context(|| {
+            fs::remove_dir_all(&target_path).with_context(|| {
                 format!(
                     "Failed to delete instance directory {}",
                     entry.path.display()
@@ -176,6 +194,9 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
     if name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
         bail!("Instance name contains invalid path characters");
     }
+    if name.ends_with('.') {
+        bail!("Instance name cannot end with '.'");
+    }
     if name.chars().any(|character| {
         character.is_control() || matches!(character, '<' | '>' | ':' | '"' | '|' | '?' | '*')
     }) {
@@ -184,12 +205,39 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn absolute_path(path: &Path) -> anyhow::Result<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(std::env::current_dir()?.join(path))
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let can_pop = matches!(
+                    normalized.components().next_back(),
+                    Some(Component::Normal(_))
+                );
+                if can_pop {
+                    normalized.pop();
+                } else if normalized.as_os_str().is_empty() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
     }
+    normalized
+}
+
+fn absolute_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    Ok(normalize_path(&joined))
 }
 
 #[cfg(test)]
@@ -273,10 +321,31 @@ mod tests {
             "a/b",
             "a\\b",
             "bad:name",
+            "trailing.",
         ] {
             assert!(
                 store.create(name, None).is_err(),
                 "{name:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn normalizes_parent_components_and_refuses_ancestor_deletion() {
+        let (temp, store) = store();
+        let nested = temp.path().join("a/b");
+        fs::create_dir_all(&nested).unwrap();
+        let with_dots = nested.join("..");
+        let entry = store.create("parent-ref", Some(&with_dots)).unwrap();
+        assert_eq!(entry.path, normalize_path(&temp.path().join("a")));
+
+        let current_dir = std::env::current_dir().unwrap();
+        if let Some(parent) = current_dir.parent() {
+            let parent_via_dots = current_dir.join("..");
+            assert_eq!(normalize_path(&parent_via_dots), normalize_path(parent));
+            assert!(
+                normalize_path(&current_dir).starts_with(normalize_path(&parent_via_dots)),
+                "normalized parent must be recognized as ancestor of cwd"
             );
         }
     }

@@ -92,6 +92,13 @@ fn installer_command(java: &Path, installer_path: &Path, game_dir: &Path) -> Com
         .arg("--installClient")
         .arg(game_dir)
         .current_dir(game_dir);
+
+    #[cfg(windows)]
+    if crate::common::output::is_json() {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
     command
 }
 

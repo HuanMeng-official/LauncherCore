@@ -65,13 +65,31 @@ fn merge_versions(parent: VersionDetails, child: VersionDetails) -> VersionDetai
     }
 }
 
+fn library_identity(name: &str) -> String {
+    let mut parts = name.split(':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(group), Some(artifact), Some(_version)) => {
+            let classifier = parts
+                .next()
+                .map(|extra| extra.split('@').next().unwrap_or(extra))
+                .filter(|classifier| !classifier.is_empty());
+            match classifier {
+                Some(classifier) => format!("{}:{}:{}", group, artifact, classifier),
+                None => format!("{}:{}", group, artifact),
+            }
+        }
+        _ => name.to_string(),
+    }
+}
+
 fn merge_libraries(parent: Vec<Library>, child: Vec<Library>) -> Vec<Library> {
     let mut merged = parent;
 
     for library in child {
+        let identity = library_identity(&library.name);
         if let Some(existing) = merged
             .iter_mut()
-            .find(|existing| existing.name == library.name)
+            .find(|existing| library_identity(&existing.name) == identity)
         {
             *existing = library;
         } else {
@@ -344,5 +362,48 @@ mod tests {
         );
 
         assert!(load_version_details(temp.path(), "child").is_err());
+    }
+
+    #[test]
+    fn child_library_replaces_older_parent_version_without_touching_natives() {
+        let temp = tempdir().unwrap();
+        write_version(
+            temp.path(),
+            "parent",
+            r#"{
+                "id": "parent",
+                "type": "release",
+                "mainClass": "Parent",
+                "libraries": [
+                    { "name": "org.ow2.asm:asm:9.6", "url": "https://example.invalid/" },
+                    { "name": "org.lwjgl:lwjgl:3.3.3", "url": "https://example.invalid/" },
+                    { "name": "org.lwjgl:lwjgl:3.3.3:natives-windows", "url": "https://example.invalid/" }
+                ]
+            }"#,
+        );
+        write_version(
+            temp.path(),
+            "child",
+            r#"{
+                "id": "child",
+                "type": "release",
+                "inheritsFrom": "parent",
+                "mainClass": "Child",
+                "libraries": [
+                    { "name": "org.ow2.asm:asm:9.7", "url": "https://example.invalid/" }
+                ]
+            }"#,
+        );
+
+        let merged = load_version_details(temp.path(), "child").unwrap();
+        let names: Vec<&str> = merged.libraries.iter().map(|lib| lib.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "org.ow2.asm:asm:9.7",
+                "org.lwjgl:lwjgl:3.3.3",
+                "org.lwjgl:lwjgl:3.3.3:natives-windows"
+            ]
+        );
     }
 }
