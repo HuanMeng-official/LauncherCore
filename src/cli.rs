@@ -152,6 +152,18 @@ pub enum Commands {
         /// Path to authlib-injector.jar (external auth; skips auto-download)
         #[arg(long = "authlib-jar")]
         authlib_jar: Option<String>,
+
+        /// Override the version type passed to --versionType (defaults to manifest type)
+        #[arg(long = "version-type", value_name = "TYPE")]
+        version_type: Option<String>,
+
+        /// Override the launcher brand passed to ${launcher_name} / -Dminecraft.launcher.brand
+        #[arg(long = "launcher-name", value_name = "NAME")]
+        launcher_name: Option<String>,
+
+        /// Override the launcher version passed to ${launcher_version} / -Dminecraft.launcher.version
+        #[arg(long = "launcher-version", value_name = "VERSION")]
+        launcher_version: Option<String>,
     },
 
     /// Login to a Microsoft account
@@ -310,6 +322,38 @@ mod tests {
 
         match cli.command {
             Commands::ExternalLogin { password, .. } => assert!(password.is_none()),
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn launch_command_parses_branding_overrides() {
+        let cli = Cli::try_parse_from([
+            "mclc",
+            "launch",
+            "1.21.1",
+            "--version-type",
+            "custom-type",
+            "--launcher-name",
+            "MyLauncher",
+            "--launcher-version",
+            "2.0.0",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Launch {
+                version,
+                version_type,
+                launcher_name,
+                launcher_version,
+                ..
+            } => {
+                assert_eq!(version, "1.21.1");
+                assert_eq!(version_type.as_deref(), Some("custom-type"));
+                assert_eq!(launcher_name.as_deref(), Some("MyLauncher"));
+                assert_eq!(launcher_version.as_deref(), Some("2.0.0"));
+            }
             _ => panic!("unexpected command"),
         }
     }

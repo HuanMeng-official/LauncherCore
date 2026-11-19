@@ -331,6 +331,23 @@ fn build_game_arguments(version_details: &VersionDetails, ctx: &ArgumentContext)
     ]
 }
 
+#[derive(Debug, Clone)]
+pub struct LaunchConfig {
+    pub version_id: String,
+    pub username: String,
+    pub access_token: String,
+    pub uuid: String,
+    pub user_type: String,
+    pub jvm_args: Option<String>,
+    pub java_path: Option<String>,
+    pub authlib_injector_jar: Option<PathBuf>,
+    pub prefetched_metadata: Option<String>,
+    pub api_url: Option<String>,
+    pub version_type: Option<String>,
+    pub launcher_name: Option<String>,
+    pub launcher_version: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct Launcher {
     pub minecraft_dir: PathBuf,
@@ -340,38 +357,26 @@ pub struct Launcher {
 }
 
 impl Launcher {
-    pub fn launch_game(
-        &self,
-        version_id: &str,
-        username: String,
-        access_token: String,
-        uuid: String,
-        user_type: String,
-        jvm_args: Option<String>,
-        java_path_override: Option<String>,
-        authlib_injector_jar: Option<std::path::PathBuf>,
-        prefetched_metadata: Option<String>,
-        api_url: Option<String>,
-    ) -> anyhow::Result<()> {
+    pub fn launch_game(&self, config: LaunchConfig) -> anyhow::Result<()> {
         crate::outln!(
             "Launching Minecraft version: {} for user: {}",
-            version_id,
-            username
+            config.version_id,
+            config.username
         );
 
-        let version_dir = self.versions_dir.join(version_id);
+        let version_dir = self.versions_dir.join(&config.version_id);
         if !version_dir.exists() {
-            return Err(anyhow::anyhow!("Version {} not found", version_id));
+            return Err(anyhow::anyhow!("Version {} not found", config.version_id));
         }
 
         let version_details =
-            crate::game::version::load_version_details(&self.versions_dir, version_id)?;
+            crate::game::version::load_version_details(&self.versions_dir, &config.version_id)?;
 
         let required_java = version_details
             .java_version
             .as_ref()
             .map(|java| java.major_version);
-        let java_path = select_java(required_java, java_path_override)?;
+        let java_path = select_java(required_java, config.java_path.clone())?;
 
         crate::outln!("Using Java: {:?}", java_path);
 
@@ -380,47 +385,8 @@ impl Launcher {
         self.verify_and_extract_natives(&version_details, &version_natives_dir)?;
 
         let classpath = self.build_classpath(&version_details)?;
-
-        let game_dir = self.minecraft_dir.to_string_lossy().to_string();
-        let assets_dir = self.assets_dir.to_string_lossy().to_string();
-        let natives_dir = version_natives_dir.to_string_lossy().to_string();
-        let library_dir = self.libraries_dir.to_string_lossy().to_string();
-        let classpath_separator = if cfg!(windows) { ";" } else { ":" };
-        let asset_index_name = version_details
-            .asset_index
-            .as_ref()
-            .map(|index| index.id.clone())
-            .unwrap_or_else(|| version_id.to_string());
-        let ctx = ArgumentContext {
-            os: std::env::consts::OS,
-            arch: std::env::consts::ARCH,
-            game_dir: &game_dir,
-            assets_dir: &assets_dir,
-            natives_dir: &natives_dir,
-            library_dir: &library_dir,
-            classpath: &classpath,
-            classpath_separator,
-            version_name: version_id,
-            version_type: &version_details.version_type,
-            asset_index_name: &asset_index_name,
-            username: &username,
-            access_token: &access_token,
-            uuid: &uuid,
-            user_type: &user_type,
-            launcher_name: "mclc",
-            launcher_version: env!("CARGO_PKG_VERSION"),
-        };
-
-        let mut command_args = build_jvm_arguments(
-            &version_details,
-            &ctx,
-            jvm_args.as_deref(),
-            authlib_injector_jar.as_deref(),
-            prefetched_metadata.as_deref(),
-            api_url.as_deref(),
-        );
-        command_args.push(version_details.main_class.clone());
-        command_args.extend(build_game_arguments(&version_details, &ctx));
+        let command_args =
+            self.assemble_command_args(&version_details, &config, &version_natives_dir, &classpath);
 
         crate::outln!(
             "Launching with command: {} {:?}",
@@ -460,6 +426,79 @@ impl Launcher {
         crate::outln!("Minecraft launched successfully");
         crate::outln!("Please wait patiently for the game window to appear");
         Ok(())
+    }
+
+    fn assemble_command_args(
+        &self,
+        version_details: &VersionDetails,
+        config: &LaunchConfig,
+        version_natives_dir: &Path,
+        classpath: &str,
+    ) -> Vec<String> {
+        let game_dir = self.minecraft_dir.to_string_lossy().to_string();
+        let assets_dir = self.assets_dir.to_string_lossy().to_string();
+        let natives_dir = version_natives_dir.to_string_lossy().to_string();
+        let library_dir = self.libraries_dir.to_string_lossy().to_string();
+        let classpath_separator = if cfg!(windows) { ";" } else { ":" };
+        let asset_index_name = version_details
+            .asset_index
+            .as_ref()
+            .map(|index| index.id.clone())
+            .unwrap_or_else(|| config.version_id.clone());
+        let version_type = config
+            .version_type
+            .as_deref()
+            .unwrap_or(&version_details.version_type);
+        let launcher_name = config.launcher_name.as_deref().unwrap_or("mclc");
+        let launcher_version = config
+            .launcher_version
+            .as_deref()
+            .unwrap_or(env!("CARGO_PKG_VERSION"));
+        let ctx = ArgumentContext {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+            game_dir: &game_dir,
+            assets_dir: &assets_dir,
+            natives_dir: &natives_dir,
+            library_dir: &library_dir,
+            classpath,
+            classpath_separator,
+            version_name: &config.version_id,
+            version_type,
+            asset_index_name: &asset_index_name,
+            username: &config.username,
+            access_token: &config.access_token,
+            uuid: &config.uuid,
+            user_type: &config.user_type,
+            launcher_name,
+            launcher_version,
+        };
+
+        let mut command_args = build_jvm_arguments(
+            version_details,
+            &ctx,
+            config.jvm_args.as_deref(),
+            config.authlib_injector_jar.as_deref(),
+            config.prefetched_metadata.as_deref(),
+            config.api_url.as_deref(),
+        );
+        if config.launcher_name.is_some()
+            && !command_args
+                .iter()
+                .any(|arg| arg.starts_with("-Dminecraft.launcher.brand="))
+        {
+            command_args.push(format!("-Dminecraft.launcher.brand={}", launcher_name));
+        }
+        if config.launcher_version.is_some()
+            && !command_args
+                .iter()
+                .any(|arg| arg.starts_with("-Dminecraft.launcher.version="))
+        {
+            command_args.push(format!("-Dminecraft.launcher.version={}", launcher_version));
+        }
+        command_args.push(version_details.main_class.clone());
+        command_args.extend(build_game_arguments(version_details, &ctx));
+        command_args
     }
 
     fn verify_and_extract_natives(
@@ -897,5 +936,104 @@ mod tests {
         let cp = launcher.build_classpath(&details).unwrap();
         let local_str = local_jar.to_string_lossy().to_string();
         assert_eq!(cp.matches(&local_str).count(), 1);
+    }
+
+    #[test]
+    fn branding_overrides_apply_to_modern_and_legacy_manifests() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = Launcher {
+            minecraft_dir: dir.path().to_path_buf(),
+            versions_dir: dir.path().join("versions"),
+            libraries_dir: dir.path().join("libraries"),
+            assets_dir: dir.path().join("assets"),
+        };
+        let natives_dir = dir.path().join("natives");
+        let base_config = LaunchConfig {
+            version_id: "1.21.1".to_string(),
+            username: "Alice".to_string(),
+            access_token: "token".to_string(),
+            uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+            user_type: "msa".to_string(),
+            jvm_args: None,
+            java_path: None,
+            authlib_injector_jar: None,
+            prefetched_metadata: None,
+            api_url: None,
+            version_type: None,
+            launcher_name: None,
+            launcher_version: None,
+        };
+
+        let modern = details(
+            r#"{
+                "id": "1.21.1",
+                "type": "release",
+                "mainClass": "net.minecraft.client.main.Main",
+                "libraries": [],
+                "arguments": {
+                    "jvm": [
+                        "-Dminecraft.launcher.brand=${launcher_name}",
+                        "-Dminecraft.launcher.version=${launcher_version}"
+                    ],
+                    "game": ["--versionType", "${version_type}"]
+                }
+            }"#,
+        );
+
+        let default_args = launcher.assemble_command_args(&modern, &base_config, &natives_dir, "a.jar");
+        assert!(default_args.contains(&"-Dminecraft.launcher.brand=mclc".to_string()));
+        assert!(
+            default_args.contains(&format!(
+                "-Dminecraft.launcher.version={}",
+                env!("CARGO_PKG_VERSION")
+            ))
+        );
+        assert!(
+            default_args
+                .windows(2)
+                .any(|pair| pair == ["--versionType", "release"])
+        );
+
+        let overridden_config = LaunchConfig {
+            version_type: Some("CustomType".to_string()),
+            launcher_name: Some("MyLauncher".to_string()),
+            launcher_version: Some("9.9.9".to_string()),
+            ..base_config.clone()
+        };
+        let overridden_args =
+            launcher.assemble_command_args(&modern, &overridden_config, &natives_dir, "a.jar");
+        assert!(overridden_args.contains(&"-Dminecraft.launcher.brand=MyLauncher".to_string()));
+        assert!(overridden_args.contains(&"-Dminecraft.launcher.version=9.9.9".to_string()));
+        assert!(
+            overridden_args
+                .windows(2)
+                .any(|pair| pair == ["--versionType", "CustomType"])
+        );
+        assert_eq!(
+            overridden_args
+                .iter()
+                .filter(|arg| arg.starts_with("-Dminecraft.launcher.brand="))
+                .count(),
+            1
+        );
+
+        let legacy = details(
+            r#"{
+                "id": "1.12.2",
+                "type": "release",
+                "mainClass": "net.minecraft.client.main.Main",
+                "libraries": [],
+                "minecraftArguments": "--username ${auth_player_name} --versionType ${version_type}"
+            }"#,
+        );
+        let legacy_args =
+            launcher.assemble_command_args(&legacy, &overridden_config, &natives_dir, "a.jar");
+        assert!(legacy_args.contains(&"-Dminecraft.launcher.brand=MyLauncher".to_string()));
+        assert!(legacy_args.contains(&"-Dminecraft.launcher.version=9.9.9".to_string()));
+        assert!(
+            legacy_args
+                .windows(2)
+                .any(|pair| pair == ["--versionType", "CustomType"])
+        );
     }
 }

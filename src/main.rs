@@ -161,6 +161,9 @@ async fn main() -> Result<()> {
             auth_type,
             api_url,
             authlib_jar,
+            version_type,
+            launcher_name,
+            launcher_version,
         } => {
             commands::launch(
                 &manager,
@@ -173,6 +176,9 @@ async fn main() -> Result<()> {
                     api_url: api_url.clone(),
                     authlib_jar: authlib_jar.clone(),
                     java_path: global_java_path,
+                    version_type: version_type.clone(),
+                    launcher_name: launcher_name.clone(),
+                    launcher_version: launcher_version.clone(),
                 },
             )
             .await?;

@@ -101,6 +101,9 @@ mclc <命令> [选项]
 | `--api-url <地址>` | Yggdrasil API 地址（外置登录） |
 | `--authlib-jar <路径>` | 使用本地的 authlib-injector.jar，跳过自动下载 |
 | `-r, --runtime <路径>` | Java 可执行文件路径（覆盖自动检测） |
+| `--version-type <类型>` | 覆盖传入 `--versionType` 的版本类型（默认使用清单中的版本类型） |
+| `--launcher-name <名称>` | 覆盖传入 `${launcher_name}` / `-Dminecraft.launcher.brand` 的启动器名称 |
+| `--launcher-version <版本>` | 覆盖传入 `${launcher_version}` / `-Dminecraft.launcher.version` 的启动器版本 |
 
 ### 外置登录选项
 
@@ -257,7 +260,7 @@ mclc json
 | `versions.list` | 无 | `{"versions":[...]}` |
 | `installed.list` | 无 | `{"versions":[{"id":"..."}]}` |
 | `install` | `version`，可选 `loader`、`loader_version`、`download_source`、`runtime` | `{"version_id":"..."}` |
-| `launch` | `version`，可选 `username`、`access_token`、`jvm_args`、`auth`、`api_url`、`authlib_jar`、`runtime` | `{"launched":true,"version":"..."}` |
+| `launch` | `version`，可选 `username`、`access_token`、`jvm_args`、`auth`、`api_url`、`authlib_jar`、`runtime`、`version_type`、`launcher_name`、`launcher_version` | `{"launched":true,"version":"..."}` |
 | `login` | 无 | `{"username":"...","uuid":"..."}` |
 | `external_login` | `identifier`、`password`、`api_url`，可选 `profile` | 账号信息 |
 | `accounts.list` | 无 | `{"accounts":[...],"msa":{...}}`（未缓存微软账号时 `msa` 为 `null`） |

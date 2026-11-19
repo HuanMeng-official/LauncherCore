@@ -397,6 +397,9 @@ mclc json --game-dir "D:\Minecraft\modded"
 | `api_url` | string | 仅外置登录 | Yggdrasil API 地址 |
 | `authlib_jar` | string | 否 | 本地 authlib-injector.jar 路径，仅外置登录使用 |
 | `runtime` | string | 否 | Java 可执行文件；默认使用启动参数 `--runtime` 和自动选择 |
+| `version_type` | string | 否 | 覆盖 `${version_type}` / `--versionType`（默认使用清单中的版本类型） |
+| `launcher_name` | string | 否 | 覆盖 `${launcher_name}` / `-Dminecraft.launcher.brand`（默认 `mclc`） |
+| `launcher_version` | string | 否 | 覆盖 `${launcher_version}` / `-Dminecraft.launcher.version`（默认当前启动器版本） |
 
 认证组合：
 

@@ -101,6 +101,9 @@ mclc <COMMAND> [OPTIONS]
 | `--api-url <URL>` | Yggdrasil API URL (external auth) |
 | `--authlib-jar <PATH>` | Use a local authlib-injector.jar instead of downloading one |
 | `-r, --runtime <PATH>` | Path to the Java executable (overrides automatic detection) |
+| `--version-type <TYPE>` | Override the version type passed to `--versionType` (defaults to manifest type) |
+| `--launcher-name <NAME>` | Override the launcher brand passed to `${launcher_name}` / `-Dminecraft.launcher.brand` |
+| `--launcher-version <VERSION>` | Override the launcher version passed to `${launcher_version}` / `-Dminecraft.launcher.version` |
 
 ### External Login Options
 
@@ -257,7 +260,7 @@ Commands:
 | `versions.list` | none | `{"versions":[...]}` |
 | `installed.list` | none | `{"versions":[{"id":"..."}]}` |
 | `install` | `version`, optional `loader`, `loader_version`, `download_source`, `runtime` | `{"version_id":"..."}` |
-| `launch` | `version`, optional `username`, `access_token`, `jvm_args`, `auth`, `api_url`, `authlib_jar`, `runtime` | `{"launched":true,"version":"..."}` |
+| `launch` | `version`, optional `username`, `access_token`, `jvm_args`, `auth`, `api_url`, `authlib_jar`, `runtime`, `version_type`, `launcher_name`, `launcher_version` | `{"launched":true,"version":"..."}` |
 | `login` | none | `{"username":"...","uuid":"..."}` |
 | `external_login` | `identifier`, `password`, `api_url`, optional `profile` | account details |
 | `accounts.list` | none | `{"accounts":[...],"msa":{...}}` (`msa` is `null` when no Microsoft account is cached) |

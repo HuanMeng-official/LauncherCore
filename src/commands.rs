@@ -2,6 +2,7 @@ use crate::auth::Authenticator;
 use crate::auth::yggdrasil::{YggdrasilAccount, YggdrasilAuthenticator, format_uuid, offline_uuid};
 use crate::cli::{AuthType, InstanceAction};
 use crate::game::instance::InstanceStore;
+use crate::game::launch::LaunchConfig;
 use crate::game::launch_manager::LauncherManager;
 use crate::game::loader::LoaderKind;
 use anyhow::Context;
@@ -76,22 +77,30 @@ pub struct LaunchOptions {
     pub api_url: Option<String>,
     pub authlib_jar: Option<String>,
     pub java_path: Option<String>,
+    pub version_type: Option<String>,
+    pub launcher_name: Option<String>,
+    pub launcher_version: Option<String>,
 }
 
 pub async fn launch(manager: &LauncherManager, options: LaunchOptions) -> anyhow::Result<()> {
-    match options.auth_type {
+    let (
+        username,
+        access_token,
+        uuid,
+        user_type,
+        authlib_injector_jar,
+        prefetched_metadata,
+        api_url,
+    ) = match options.auth_type {
         AuthType::Offline => {
             let username = options.username.unwrap_or_else(|| "Player".to_string());
             let access_token = options.access_token.unwrap_or_else(|| "0".to_string());
             let uuid = offline_uuid(&username);
-            manager.launch(
-                &options.version,
+            (
                 username,
                 access_token,
                 uuid,
                 "legacy".to_string(),
-                options.jvm_args,
-                options.java_path,
                 None,
                 None,
                 None,
@@ -102,14 +111,11 @@ pub async fn launch(manager: &LauncherManager, options: LaunchOptions) -> anyhow
                 let profile = Authenticator::default()
                     .get_minecraft_profile(&access_token)
                     .await?;
-                manager.launch(
-                    &options.version,
+                (
                     profile.name,
                     access_token,
                     format_uuid(&profile.id),
                     "msa".to_string(),
-                    options.jvm_args,
-                    options.java_path,
                     None,
                     None,
                     None,
@@ -121,14 +127,11 @@ pub async fn launch(manager: &LauncherManager, options: LaunchOptions) -> anyhow
                     );
                 };
                 let cache = manager.ensure_fresh_auth_cache(cache).await?;
-                manager.launch(
-                    &options.version,
+                (
                     cache.username,
                     cache.access_token,
                     cache.uuid,
                     "msa".to_string(),
-                    options.jvm_args,
-                    options.java_path,
                     None,
                     None,
                     None,
@@ -197,18 +200,31 @@ pub async fn launch(manager: &LauncherManager, options: LaunchOptions) -> anyhow
             };
             let prefetched = authenticator.pre_fetch_metadata().await?;
 
-            manager.launch(
-                &options.version,
+            (
                 account_to_use.name,
                 account_to_use.access_token,
                 account_to_use.uuid,
                 "mojang".to_string(),
-                options.jvm_args,
-                options.java_path,
                 Some(jar_path),
                 Some(prefetched),
                 Some(account_to_use.api_url),
             )
         }
-    }
+    };
+
+    manager.launch(LaunchConfig {
+        version_id: options.version,
+        username,
+        access_token,
+        uuid,
+        user_type,
+        jvm_args: options.jvm_args,
+        java_path: options.java_path,
+        authlib_injector_jar,
+        prefetched_metadata,
+        api_url,
+        version_type: options.version_type,
+        launcher_name: options.launcher_name,
+        launcher_version: options.launcher_version,
+    })
 }

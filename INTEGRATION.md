@@ -443,6 +443,9 @@ Parameters:
 | `api_url` | string | External only | Yggdrasil API URL |
 | `authlib_jar` | string | No | Path to a local authlib-injector.jar; external auth only |
 | `runtime` | string | No | Java executable; defaults to the startup `--runtime` and automatic selection |
+| `version_type` | string | No | Override `${version_type}` / `--versionType` (defaults to manifest type) |
+| `launcher_name` | string | No | Override `${launcher_name}` / `-Dminecraft.launcher.brand` (defaults to `mclc`) |
+| `launcher_version` | string | No | Override `${launcher_version}` / `-Dminecraft.launcher.version` (defaults to launcher version) |
 
 Authentication matrix:
 

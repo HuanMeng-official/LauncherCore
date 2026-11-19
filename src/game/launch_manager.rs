@@ -4,7 +4,7 @@ use crate::auth::yggdrasil::{
 use crate::auth::{Authenticator, cache_needs_refresh};
 use crate::common::models::AuthCache;
 use crate::game::install::Installer;
-use crate::game::launch::Launcher;
+use crate::game::launch::{LaunchConfig, Launcher};
 use crate::game::loader::LoaderKind;
 use crate::net::download::DownloadSource;
 use std::fs;
@@ -352,31 +352,8 @@ impl LauncherManager {
         Ok(refreshed)
     }
 
-    pub fn launch(
-        &self,
-        version_id: &str,
-        username: String,
-        access_token: String,
-        uuid: String,
-        user_type: String,
-        jvm_args: Option<String>,
-        java_path: Option<String>,
-        authlib_injector_jar: Option<std::path::PathBuf>,
-        prefetched_metadata: Option<String>,
-        api_url: Option<String>,
-    ) -> anyhow::Result<()> {
-        self.launcher.launch_game(
-            version_id,
-            username,
-            access_token,
-            uuid,
-            user_type,
-            jvm_args,
-            java_path,
-            authlib_injector_jar,
-            prefetched_metadata,
-            api_url,
-        )
+    pub fn launch(&self, config: LaunchConfig) -> anyhow::Result<()> {
+        self.launcher.launch_game(config)
     }
 }
 

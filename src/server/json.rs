@@ -55,6 +55,12 @@ struct LaunchParams {
     authlib_jar: Option<String>,
     #[serde(default)]
     runtime: Option<String>,
+    #[serde(default)]
+    version_type: Option<String>,
+    #[serde(default)]
+    launcher_name: Option<String>,
+    #[serde(default)]
+    launcher_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,6 +225,9 @@ async fn dispatch(
                     api_url: params.api_url,
                     authlib_jar: params.authlib_jar,
                     java_path: params.runtime.or(default_java_path),
+                    version_type: params.version_type,
+                    launcher_name: params.launcher_name,
+                    launcher_version: params.launcher_version,
                 },
             )
             .await?;
@@ -376,5 +385,28 @@ mod tests {
     fn rejects_malformed_requests() {
         assert!(serde_json::from_str::<JsonRequest>("{}").is_err());
         assert!(serde_json::from_str::<JsonRequest>(r#"{"command":"ping"}"#).is_ok());
+    }
+
+    #[test]
+    fn parses_launch_params_with_branding_overrides() {
+        let params: LaunchParams = serde_json::from_str(
+            r#"{
+                "version": "1.21.1",
+                "version_type": "Modded",
+                "launcher_name": "CustomLauncher",
+                "launcher_version": "3.1.4"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(params.version, "1.21.1");
+        assert_eq!(params.version_type.as_deref(), Some("Modded"));
+        assert_eq!(params.launcher_name.as_deref(), Some("CustomLauncher"));
+        assert_eq!(params.launcher_version.as_deref(), Some("3.1.4"));
+
+        let minimal: LaunchParams = serde_json::from_str(r#"{"version":"1.21.1"}"#).unwrap();
+        assert!(minimal.version_type.is_none());
+        assert!(minimal.launcher_name.is_none());
+        assert!(minimal.launcher_version.is_none());
     }
 }
